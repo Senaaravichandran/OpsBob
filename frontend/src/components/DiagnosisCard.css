@@ -1,0 +1,12 @@
+.diagnosis { display: flex; flex-direction: column; gap: 12px; padding: 16px; }
+.diagnosis__phase { background: var(--ob-surface); border: 1px solid var(--ob-border); border-left: 3px solid var(--phase-color, var(--ob-border)); border-radius: 4px; overflow: hidden; transition: all 0.3s ease; }
+.diagnosis__phase--active { border-color: var(--phase-color); box-shadow: 0 0 12px rgba(68, 136, 255, 0.1); }
+.diagnosis__phase--done { opacity: 1; }
+.diagnosis__phase:not(.diagnosis__phase--done):not(.diagnosis__phase--active) { opacity: 0.4; }
+.diagnosis__phase-header { display: flex; align-items: center; justify-content: space-between; padding: 10px 14px; border-bottom: 1px solid var(--ob-border); }
+.diagnosis__phase-label { font-size: 11px; letter-spacing: 2px; color: var(--ob-text-secondary); font-weight: 500; }
+.diagnosis__phase-status { display: flex; align-items: center; gap: 8px; }
+.diagnosis__loading { min-height: auto !important; }
+.diagnosis__phase-content { padding: 12px 14px; max-height: 200px; overflow-y: auto; }
+.diagnosis__text { font-family: 'IBM Plex Mono', monospace; font-size: 12px; line-height: 1.6; color: var(--ob-text-primary); white-space: pre-wrap; word-break: break-word; margin: 0; }
+.diagnosis__placeholder { font-size: 12px; color: var(--ob-text-muted); font-style: italic; }

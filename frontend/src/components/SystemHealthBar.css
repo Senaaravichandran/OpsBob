@@ -1,0 +1,9 @@
+.health-bar { display: flex; align-items: center; gap: 16px; padding: 6px 20px; background: #080808; border-top: 1px solid var(--ob-border); font-size: 10px; letter-spacing: 1.5px; }
+.health-bar__item { display: flex; align-items: center; gap: 6px; }
+.health-bar__dot { width: 6px; height: 6px; border-radius: 50%; }
+.health-bar__dot--connected { background: var(--ob-accent-green); box-shadow: 0 0 6px rgba(0, 255, 136, 0.5); }
+.health-bar__dot--degraded { background: var(--ob-accent-amber); box-shadow: 0 0 6px rgba(255, 170, 0, 0.5); animation: pulse 1.5s ease-in-out infinite; }
+.health-bar__dot--unavailable { background: var(--ob-accent-red); box-shadow: 0 0 6px rgba(255, 68, 68, 0.5); }
+.health-bar__dot--unknown { background: var(--ob-text-muted); }
+.health-bar__label { color: var(--ob-text-muted); }
+.health-bar__overall { margin-left: auto; }

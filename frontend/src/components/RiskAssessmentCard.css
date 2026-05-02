@@ -1,0 +1,15 @@
+.risk-card { background: var(--ob-surface); border: 1px solid var(--ob-accent-purple); border-radius: 4px; padding: 14px 16px; margin: 0 16px; }
+.risk-card__header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 12px; }
+.risk-card__title { 
+  display: flex;
+  align-items: center;
+  font-size: 12px; 
+  letter-spacing: 2px; 
+  color: var(--ob-accent-purple); 
+  font-weight: 500; 
+}
+.risk-card__grid { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+.risk-card__item { display: flex; flex-direction: column; gap: 4px; }
+.risk-card__item--full { grid-column: 1 / -1; }
+.risk-card__label { font-size: 10px; letter-spacing: 2px; color: var(--ob-text-muted); }
+.risk-card__value { font-size: 12px; color: var(--ob-text-secondary); }

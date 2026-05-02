@@ -1,0 +1,19 @@
+.incident-feed { display: flex; flex-direction: column; height: 100%; }
+.incident-feed__header { display: flex; align-items: center; justify-content: space-between; padding: 16px 20px; border-bottom: 1px solid var(--ob-border); }
+.incident-feed__title { font-size: 12px; letter-spacing: 3px; color: var(--ob-text-secondary); font-weight: 500; }
+.incident-feed__count { background: var(--ob-accent-red); color: #000; font-size: 11px; font-weight: 600; padding: 2px 8px; border-radius: 10px; min-width: 22px; text-align: center; }
+.incident-feed__list { flex: 1; overflow-y: auto; padding: 12px; display: flex; flex-direction: column; gap: 10px; }
+.incident-feed__empty { flex: 1; display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 12px; color: var(--ob-text-muted); font-size: 12px; letter-spacing: 2px; }
+.incident-feed__empty-dot { width: 10px; height: 10px; border-radius: 50%; background: var(--ob-accent-green); box-shadow: var(--ob-glow-green); animation: pulse 2s ease-in-out infinite; }
+.incident-feed__empty-sub { font-size: 11px; color: var(--ob-text-muted); letter-spacing: 1px; }
+.incident-card { background: var(--ob-surface); border: 1px solid var(--ob-border); border-left: 3px solid var(--ob-accent-red); padding: 14px 16px; border-radius: 4px; animation: fadeIn 0.3s ease-out; }
+.incident-card--resolved { border-left-color: var(--ob-accent-green); opacity: 0.7; }
+.incident-card--analyzing { border-left-color: var(--ob-accent-blue); }
+.incident-card--deploying { border-left-color: var(--ob-accent-purple); }
+.incident-card__header { display: flex; align-items: center; gap: 8px; margin-bottom: 8px; }
+.incident-card__icon { color: var(--ob-accent-red); }
+.incident-card__id { font-size: 12px; font-weight: 500; flex: 1; }
+.incident-card__service { font-size: 14px; font-weight: 500; color: var(--ob-text-primary); margin-bottom: 4px; }
+.incident-card__type { font-size: 11px; color: var(--ob-accent-amber); letter-spacing: 1px; margin-bottom: 8px; }
+.incident-card__meta { display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--ob-text-muted); }
+.incident-card__analyze-btn { margin-top: 10px; width: 100%; font-family: 'IBM Plex Mono', monospace !important; letter-spacing: 1px; font-size: 11px !important; }

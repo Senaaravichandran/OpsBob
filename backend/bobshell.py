@@ -8,8 +8,9 @@ import json
 import os
 import tempfile
 from datetime import datetime
-from typing import AsyncGenerator
+from typing import AsyncGenerator, Dict, Any, Optional
 from dotenv import load_dotenv
+from watsonx_client import generate_with_granite
 
 # Load environment variables
 load_dotenv()
@@ -63,6 +64,12 @@ async def apply_fix_and_deploy(
     try:
         yield _log_event(f"Starting deployment for incident {incident_id}...")
         yield _log_event(f"Fixed code written to: {fixed_file_path}")
+        
+        # Generate commit message with Granite
+        yield _log_event("Generating commit message with IBM Granite...")
+        commit_context = f"Incident {incident_id}: Fix for production issue. Code changes: {fixed_code[:200]}..."
+        commit_message = await generate_with_granite("commit_message", commit_context)
+        yield _log_event(f"Commit message: {commit_message}")
         
         # Prepare environment variables for the script
         env = os.environ.copy()
@@ -206,6 +213,43 @@ async def rollback_deployment(incident_id: str, reason: str) -> AsyncGenerator[s
     }
     
     yield f"data: {json.dumps(rollback_event)}\n\n"
+
+
+def log_orchestrate_decision(
+    incident_id: str,
+    action: str,
+    approver: str,
+    reason: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Logs a watsonx Orchestrate decision to the audit trail
+    
+    This function creates an audit entry when a human approver makes a decision
+    through watsonx Orchestrate. The entry appears in the Incident Timeline panel
+    on the dashboard alongside Bob's reasoning steps.
+    
+    Args:
+        incident_id: Unique incident identifier
+        action: Decision action - "approve", "escalate", or "reject"
+        approver: Name or ID of the person who made the decision
+        reason: Optional comment from the approver explaining their decision
+    
+    Returns:
+        Dictionary containing the audit trail entry
+    """
+    from datetime import datetime
+    
+    audit_entry = {
+        "timestamp": datetime.now().isoformat(),
+        "event": "orchestrate_decision",
+        "incident_id": incident_id,
+        "action": action,
+        "approver": approver,
+        "reason": reason,
+        "source": "watsonx_orchestrate"
+    }
+    
+    return audit_entry
 
 
 # Made with Bob

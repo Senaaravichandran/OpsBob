@@ -1,0 +1,113 @@
+/* OpsBob — Global Styles with IBM Carbon Design System */
+@use '@carbon/react' with (
+  $font-path: '@ibm/plex'
+);
+
+:root {
+  --ob-bg: #0a0a0a;
+  --ob-surface: #111111;
+  --ob-surface-hover: #1a1a1a;
+  --ob-border: #1e1e1e;
+  --ob-border-active: #333333;
+  --ob-text-primary: #f4f4f4;
+  --ob-text-secondary: #888888;
+  --ob-text-muted: #555555;
+  --ob-accent-red: #ff4444;
+  --ob-accent-green: #00ff88;
+  --ob-accent-blue: #4488ff;
+  --ob-accent-amber: #ffaa00;
+  --ob-accent-purple: #aa66ff;
+  --ob-accent-cyan: #00ddff;
+  --ob-glow-green: 0 0 20px rgba(0, 255, 136, 0.3);
+  --ob-glow-red: 0 0 20px rgba(255, 68, 68, 0.3);
+  --ob-glow-blue: 0 0 20px rgba(68, 136, 255, 0.3);
+}
+
+*, *::before, *::after {
+  box-sizing: border-box;
+  margin: 0;
+  padding: 0;
+}
+
+html, body {
+  height: 100%;
+  overflow: hidden;
+}
+
+body {
+  font-family: 'IBM Plex Mono', 'IBM Plex Sans', monospace;
+  background: var(--ob-bg);
+  color: var(--ob-text-primary);
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+}
+
+#root {
+  height: 100%;
+}
+
+/* Carbon dark theme overrides */
+.cds--white,
+.cds--g10,
+.cds--g90,
+.cds--g100 {
+  --cds-background: var(--ob-bg);
+  --cds-layer-01: var(--ob-surface);
+  --cds-layer-02: #1a1a1a;
+  --cds-text-primary: var(--ob-text-primary);
+  --cds-text-secondary: var(--ob-text-secondary);
+  --cds-border-subtle: var(--ob-border);
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+::-webkit-scrollbar-track {
+  background: var(--ob-bg);
+}
+::-webkit-scrollbar-thumb {
+  background: var(--ob-border-active);
+  border-radius: 3px;
+}
+::-webkit-scrollbar-thumb:hover {
+  background: var(--ob-text-muted);
+}
+
+/* Animations */
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.4; }
+}
+@keyframes fadeIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+@keyframes slideIn {
+  from { opacity: 0; transform: translateX(-12px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+@keyframes glow {
+  0%, 100% { box-shadow: 0 0 5px rgba(0, 255, 136, 0.2); }
+  50% { box-shadow: 0 0 20px rgba(0, 255, 136, 0.4); }
+}
+@keyframes typing {
+  from { width: 0; }
+  to { width: 100%; }
+}
+@keyframes blink {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0; }
+}
+@keyframes scanline {
+  0% { transform: translateY(-100%); }
+  100% { transform: translateY(100vh); }
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.4s ease-out;
+}
+.animate-slide-in {
+  animation: slideIn 0.3s ease-out;
+}

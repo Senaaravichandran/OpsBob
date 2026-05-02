@@ -8,7 +8,15 @@ env_path = Path(__file__).parent.parent / '.env'
 load_dotenv(env_path)
 
 # Required keys
-required_keys = ['BOB_API_KEY', 'IBM_CLOUD_API_KEY', 'IBM_CLOUD_REGION', 'CODE_ENGINE_PROJECT']
+required_keys = [
+    'BOB_API_KEY',
+    'IBM_CLOUD_API_KEY',
+    'IBM_CLOUD_REGION',
+    'CODE_ENGINE_PROJECT',
+    'WATSONX_API_KEY',
+    'WATSONX_PROJECT_ID',
+    'WATSONX_URL'
+]
 
 # Check which keys exist
 missing = []

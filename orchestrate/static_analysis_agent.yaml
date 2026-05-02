@@ -1,0 +1,32 @@
+name: static_analysis_agent
+description: Reviews AI-generated code fixes for security vulnerabilities and correctness issues
+instructions: |
+  You are a senior security engineer. When given a code diff and root cause analysis,
+  review the fix for null pointer risks, injection vulnerabilities, logic errors,
+  and whether it actually addresses the root cause. Return a verdict of PASS, WARN, or FAIL.
+model: ibm/granite-3-8b-instruct
+tools:
+  - name: review_code_fix
+    type: api
+    endpoint: http://localhost:8000/orchestrate/static-analysis
+    method: POST
+    input_schema:
+      type: object
+      properties:
+        incident_id:
+          type: string
+        code_diff:
+          type: string
+        plan_text:
+          type: string
+      required: [incident_id, code_diff]
+    output_schema:
+      type: object
+      properties:
+        verdict:
+          type: string
+          enum: [PASS, WARN, FAIL]
+        findings:
+          type: array
+          items:
+            type: string

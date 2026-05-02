@@ -1,0 +1,34 @@
+.agent-pipeline { padding: 16px; }
+.agent-pipeline__header { display: flex; align-items: center; justify-content: space-between; margin-bottom: 16px; }
+.agent-pipeline__title { font-size: 12px; letter-spacing: 3px; color: var(--ob-text-secondary); font-weight: 500; }
+.agent-pipeline__steps { display: flex; flex-direction: column; gap: 4px; }
+.agent-step { display: flex; align-items: flex-start; gap: 12px; padding: 10px 12px; border-radius: 4px; border: 1px solid var(--ob-border); background: var(--ob-surface); transition: all 0.3s ease; }
+.agent-step--pass, .agent-step--complete { border-left: 3px solid var(--ob-accent-green); }
+.agent-step--warn { border-left: 3px solid var(--ob-accent-amber); }
+.agent-step--fail { border-left: 3px solid var(--ob-accent-red); }
+.agent-step--running { border-left: 3px solid var(--ob-accent-blue); animation: pulse 1.5s ease-in-out infinite; }
+.agent-step--pending { border-left: 3px solid var(--ob-border); opacity: 0.5; }
+.agent-step__connector { display: flex; flex-direction: column; align-items: center; width: 2px; }
+.agent-step__line { width: 2px; height: 8px; background: var(--ob-border); margin-bottom: 4px; }
+.agent-step__line--pass { background: var(--ob-accent-green); }
+.agent-step__line--fail { background: var(--ob-accent-red); }
+.agent-step__indicator { display: flex; align-items: center; justify-content: center; width: 24px; height: 24px; flex-shrink: 0; }
+.agent-step--pass .agent-step__indicator { color: var(--ob-accent-green); }
+.agent-step--warn .agent-step__indicator { color: var(--ob-accent-amber); }
+.agent-step--fail .agent-step__indicator { color: var(--ob-accent-red); }
+.agent-step--running .agent-step__indicator { color: var(--ob-accent-blue); }
+.agent-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--ob-text-muted); }
+.agent-step__content { flex: 1; min-width: 0; }
+.agent-step__header { display: flex; align-items: center; gap: 8px; margin-bottom: 4px; }
+.agent-step__icon { 
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--ob-accent-blue);
+}
+.agent-step__label { font-size: 12px; font-weight: 500; flex: 1; }
+.agent-step__duration { font-size: 10px; color: var(--ob-text-muted); }
+.agent-step__findings { margin-top: 6px; display: flex; flex-direction: column; gap: 2px; }
+.agent-step__finding { font-size: 11px; color: var(--ob-text-secondary); }
+.agent-step__reason { font-size: 11px; color: var(--ob-accent-amber); margin-top: 4px; display: block; }
+.agent-step__fallback { margin-top: 4px; }

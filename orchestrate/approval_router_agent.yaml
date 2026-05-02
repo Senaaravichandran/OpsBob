@@ -1,0 +1,36 @@
+name: approval_router_agent
+description: Routes fix approval based on risk assessment, static analysis, and test results
+instructions: |
+  You evaluate the combined signals from the risk assessment, static analysis, and test
+  results to determine the approval routing. Pure logic — no external API calls needed.
+  Routes: auto-approve (all green), review (medium signals), escalate (any failures).
+model: ibm/granite-3-8b-instruct
+tools:
+  - name: route_fix_approval
+    type: api
+    endpoint: http://localhost:8000/orchestrate/route-approval
+    method: POST
+    input_schema:
+      type: object
+      properties:
+        incident_id:
+          type: string
+        risk_score:
+          type: string
+        static_verdict:
+          type: string
+        test_results:
+          type: object
+      required: [incident_id]
+    output_schema:
+      type: object
+      properties:
+        recommendation:
+          type: string
+          enum: [approve, review, escalate]
+        routing_reason:
+          type: string
+        route_to:
+          type: string
+        urgency:
+          type: string

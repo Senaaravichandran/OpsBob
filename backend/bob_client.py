@@ -8,6 +8,7 @@ import json
 import aiohttp
 from typing import AsyncGenerator, Dict, Any
 from dotenv import load_dotenv
+from watsonx_client import call_watsonx_risk_assessment
 
 # Load environment variables
 load_dotenv()
@@ -73,7 +74,18 @@ Read this code carefully. Identify all memory management patterns, object lifecy
         messages.append(plan_message)
         plan_response = await _call_bob_api(messages)
         
-        yield f"data: {json.dumps({'phase': 'plan', 'content': plan_response, 'done': True})}\n\n"
+        # Call watsonx.ai for risk assessment
+        print("Calling watsonx.ai for risk assessment...")
+        risk_assessment = await call_watsonx_risk_assessment(plan_response)
+        print(f"Risk assessment: {risk_assessment}")
+        
+        # Yield plan completion with risk assessment
+        yield f"data: {json.dumps({
+            'phase': 'plan',
+            'content': plan_response,
+            'risk_assessment': risk_assessment,
+            'done': True
+        })}\n\n"
         
         # Add assistant response to conversation
         messages.append({"role": "assistant", "content": plan_response})

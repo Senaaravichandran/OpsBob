@@ -1,447 +1,432 @@
 """
 OpsBob Backend - FastAPI Orchestration Layer
-Handles incident webhooks and streams Bob's analysis to the React dashboard
+Handles incident webhooks, streams Bob's analysis, runs 4-agent pipeline,
+and orchestrates deployment via BobShell.
 """
 
 import asyncio
 import json
 import os
-from typing import Dict, Any
+from datetime import datetime
+from typing import Dict, Any, Optional
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-# Import Bob client and BobShell
 from bob_client import call_bob_orchestrator
 from bobshell import apply_fix_and_deploy
 from mcp_client import get_mcp_client
+from watsonx_client import generate_with_granite
+from orchestrate_agents import (
+    run_agent_pipeline, run_post_incident,
+    get_incident_history, get_similar_incidents
+)
+from health_monitor import get_all_service_health
+from incident_intelligence import build_context_enrichment, get_stats as get_memory_stats
 
-# Load environment variables
 load_dotenv()
 
-# Get environment variables
 BOB_API_KEY = os.getenv("BOB_API_KEY")
-IBM_CLOUD_API_KEY = os.getenv("IBM_CLOUD_API_KEY")
-IBM_CLOUD_REGION = os.getenv("IBM_CLOUD_REGION")
-CODE_ENGINE_PROJECT = os.getenv("CODE_ENGINE_PROJECT")
 SOURCE_FILES_PATH = os.getenv("SOURCE_FILES_PATH", "demo-service")
+DEMO_SERVICE_URL = os.getenv("DEMO_SERVICE_URL", "http://localhost:3001")
 
-# Initialize FastAPI app
-app = FastAPI(title="OpsBob Backend", version="1.0.0")
+app = FastAPI(title="OpsBob Backend", version="2.0.0")
 
-# Enable CORS for React frontend
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
+    allow_origins=["http://localhost:3000", "http://localhost:5173"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
-# Global storage for active incidents
 active_incidents: Dict[str, Dict[str, Any]] = {}
+incident_queue: list = []
 
 
-# Pydantic models for request/response validation
+# ── Pydantic Models ──────────────────────────────────────────────
 class IncidentWebhook(BaseModel):
-    id: str
-    title: str
-    entityName: str
-    severity: int
-    start: int
-
+    id: Optional[str] = None
+    incidentId: Optional[str] = None
+    title: Optional[str] = "Memory leak detected"
+    entityName: Optional[str] = None
+    service: Optional[str] = None
+    severity: Optional[Any] = "HIGH"
+    type: Optional[str] = "MEMORY_LEAK"
+    start: Optional[int] = None
+    message: Optional[str] = ""
 
 class ApprovalRequest(BaseModel):
     approved: bool
 
+class OrchestrateDecision(BaseModel):
+    incident_id: str
+    action: str  # "approve" | "escalate" | "reject"
+    approver: str
+    reason: str
 
-# Startup event
+
+# ── Startup ──────────────────────────────────────────────────────
 @app.on_event("startup")
 async def startup_event():
-    print("OpsBob Backend starting up...")
-    print("Listening for incidents on /webhook")
-    print("Streaming analysis on /stream/{incidentId}")
+    print("=" * 60)
+    print("  OpsBob Backend v2.0 — Production Intelligence Platform")
+    print("=" * 60)
+    print(f"  Bob API: {'configured' if BOB_API_KEY else 'NOT SET'}")
+    print(f"  Source path: {SOURCE_FILES_PATH}")
+    print(f"  Demo service: {DEMO_SERVICE_URL}")
+    memory_stats = get_memory_stats()
+    print(f"  Institutional memory: {memory_stats['total_incidents']} past incidents")
+    print("=" * 60)
 
 
-# POST /webhook - Receive incident alerts
+# ── POST /webhook ────────────────────────────────────────────────
 @app.post("/webhook")
 async def receive_webhook(incident: IncidentWebhook):
-    """
-    Receives incident alerts from Instana
-    Assembles Bob's context dynamically by:
-    1. Calling MCP server for stack traces and metrics
-    2. Reading source files from disk
-    3. Building the complete context string
-    """
-    from datetime import datetime
-    
+    """Receives incident alerts from Instana or manual trigger."""
     incident_data = incident.dict()
-    incident_id = incident_data["id"]
-    service = incident_data["entityName"]
-    severity = incident_data["severity"]
-    
-    # Log incoming webhook
-    timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    print(f"[{timestamp}] WEBHOOK RECEIVED:")
+    incident_id = incident_data.get("id") or incident_data.get("incidentId") or f"INC-{int(datetime.now().timestamp())}"
+    service = incident_data.get("entityName") or incident_data.get("service") or "payments-api"
+    severity = incident_data.get("severity", "HIGH")
+    inc_type = incident_data.get("type", "MEMORY_LEAK")
+
+    ts = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    print(f"\n[{ts}] WEBHOOK RECEIVED:")
     print(f"  Incident ID: {incident_id}")
     print(f"  Service: {service}")
     print(f"  Severity: {severity}")
-    print(f"  Title: {incident_data['title']}")
-    
+
+    # Queue if another incident is active
+    active_analyzing = [i for i in active_incidents.values() if i.get("status") in ("analyzing", "deploying")]
+    if active_analyzing:
+        incident_queue.append({"id": incident_id, "data": incident_data})
+        print(f"  Queued (position {len(incident_queue)})")
+        return {"status": "queued", "incidentId": incident_id, "position": len(incident_queue)}
+
     try:
-        # Get MCP client
-        mcp = get_mcp_client()
-        
-        # Call MCP server for enrichment data
-        print(f"Calling MCP server for incident {incident_id}...")
-        stack_traces_result = mcp.get_stack_traces(incident_id)
-        metrics_result = mcp.get_service_metrics(service, "10m")
-        
-        # Extract data from MCP results
+        # Try MCP for enrichment, fall back to demo service
         stack_traces = ""
-        if not stack_traces_result.get("error"):
-            stack_traces = stack_traces_result.get("stack_trace", "No stack trace available")
-        else:
-            stack_traces = f"Error fetching stack traces: {stack_traces_result.get('message')}"
-        
         mem_growth_mb = 0
-        if not metrics_result.get("error"):
-            current_mem = metrics_result.get("current_memory_mb", 0)
-            baseline_mem = metrics_result.get("baseline_memory_mb", 0)
-            mem_growth_mb = current_mem - baseline_mem
-        
-        # Read source files dynamically
-        source_files_base = os.path.join(
-            os.path.dirname(os.path.dirname(__file__)),
-            SOURCE_FILES_PATH
-        )
-        
-        source_files = {
-            "routes/payments.js": "",
-            "middleware/session.js": "",
-            "store/sessionStore.js": ""
-        }
-        
-        for file_path in source_files.keys():
-            full_path = os.path.join(source_files_base, file_path)
+        try:
+            mcp = get_mcp_client()
+            st_result = mcp.get_stack_traces(incident_id)
+            if not st_result.get("error"):
+                stack_traces = st_result.get("stack_trace", "")
+            m_result = mcp.get_service_metrics(service, "10m")
+            if not m_result.get("error"):
+                mem_growth_mb = m_result.get("current_memory_mb", 0) - m_result.get("baseline_memory_mb", 0)
+        except Exception as mcp_err:
+            print(f"  MCP fallback: {mcp_err}")
+            # Fallback to demo service /debug/traces and /metrics
             try:
-                with open(full_path, 'r', encoding='utf-8') as f:
-                    source_files[file_path] = f.read()
-                print(f"  Loaded {file_path}")
-            except FileNotFoundError:
-                source_files[file_path] = f"// File not found: {file_path}"
-                print(f"  WARNING: {file_path} not found")
-            except Exception as e:
-                source_files[file_path] = f"// Error reading file: {str(e)}"
-                print(f"  ERROR reading {file_path}: {e}")
-        
-        # Assemble Bob's context string
+                import aiohttp
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(f"{DEMO_SERVICE_URL}/debug/traces", timeout=aiohttp.ClientTimeout(total=3)) as r:
+                        if r.status == 200:
+                            data = await r.json()
+                            stack_traces = data.get("stack_trace", "")
+                    async with session.get(f"{DEMO_SERVICE_URL}/metrics", timeout=aiohttp.ClientTimeout(total=3)) as r:
+                        if r.status == 200:
+                            data = await r.json()
+                            mem_growth_mb = data.get("heap_used_mb", 0) - 50
+            except:
+                stack_traces = "Stack traces unavailable"
+
+        # Read source files
+        source_base = os.path.join(os.path.dirname(os.path.dirname(__file__)), SOURCE_FILES_PATH)
+        source_files = {}
+        for fp in ["server.js", "routes/payments.js", "middleware/session.js", "store/sessionStore.js"]:
+            full = os.path.join(source_base, fp)
+            try:
+                with open(full, 'r', encoding='utf-8') as f:
+                    source_files[fp] = f.read()
+            except:
+                source_files[fp] = f"// File not found: {fp}"
+
+        # Institutional memory enrichment
+        memory_enrichment = build_context_enrichment(inc_type, service) or ""
+
         bob_context = f"""INCIDENT SUMMARY:
 Service: {service}
 Incident ID: {incident_id}
-Detected: memory growth of {mem_growth_mb}MB over 10 minutes
+Detected: memory growth of {mem_growth_mb:.0f}MB over 10 minutes
 Severity: {severity}
+Type: {inc_type}
 
 INSTANA STACK TRACE:
 {stack_traces}
 
-SOURCE CODE — routes/payments.js:
-{source_files['routes/payments.js']}
-
-SOURCE CODE — middleware/session.js:
-{source_files['middleware/session.js']}
+SOURCE CODE — server.js:
+{source_files.get('server.js', '')}
 
 SOURCE CODE — store/sessionStore.js:
-{source_files['store/sessionStore.js']}
+{source_files.get('store/sessionStore.js', '')}
 
+SOURCE CODE — middleware/session.js:
+{source_files.get('middleware/session.js', '')}
+
+SOURCE CODE — routes/payments.js:
+{source_files.get('routes/payments.js', '')}
+{memory_enrichment}
 Your task: identify the root cause, propose a minimal fix, and write the corrected code. Then generate one regression test that would catch this bug."""
-        
-        # Store incident with assembled context
+
         active_incidents[incident_id] = {
             **incident_data,
+            "incident_id": incident_id,
             "status": "received",
+            "received_at": datetime.now().isoformat(),
             "timestamp": asyncio.get_event_loop().time(),
             "context": bob_context,
             "service": service,
             "severity": severity,
+            "type": inc_type,
             "mem_growth_mb": mem_growth_mb,
-            "stack_traces": stack_traces
+            "stack_traces": stack_traces,
+            "pipeline_results": None,
+            "approval_routing": None
         }
-        
-        print(f"Context assembled for incident {incident_id} ({len(bob_context)} chars)")
-        
-        return {
-            "status": "received",
-            "incidentId": incident_id,
-            "contextLength": len(bob_context)
-        }
-        
+
+        print(f"  Context assembled ({len(bob_context)} chars)")
+        return {"status": "received", "incidentId": incident_id, "contextLength": len(bob_context)}
+
     except Exception as e:
-        print(f"ERROR assembling context: {e}")
-        # Store incident with error
-        active_incidents[incident_id] = {
-            **incident_data,
-            "status": "error",
-            "timestamp": asyncio.get_event_loop().time(),
-            "error": str(e)
-        }
-        raise HTTPException(status_code=500, detail=f"Error assembling context: {str(e)}")
+        print(f"  ERROR: {e}")
+        active_incidents[incident_id] = {**incident_data, "incident_id": incident_id, "status": "error", "error": str(e)}
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-# GET /stream/{incidentId} - Server-Sent Events stream
+# ── GET /stream/{incidentId} ────────────────────────────────────
 @app.get("/stream/{incidentId}")
 async def stream_analysis(incidentId: str):
-    """
-    Streams Bob's analysis back to the React dashboard in real-time
-    Uses Server-Sent Events (SSE) for live updates
-    
-    Uses the pre-assembled context from the webhook endpoint
-    Calls IBM Bob API through bob_client.call_bob_orchestrator()
-    """
-    
-    # Check if incident exists
+    """Streams Bob's analysis + agent pipeline via SSE."""
     if incidentId not in active_incidents:
         raise HTTPException(status_code=404, detail="Incident not found")
-    
+
     incident = active_incidents[incidentId]
-    
-    # Check if context was assembled
     if "context" not in incident:
-        raise HTTPException(
-            status_code=400,
-            detail="Incident context not assembled. Webhook may have failed."
-        )
-    
+        raise HTTPException(status_code=400, detail="Context not assembled")
+
     async def event_generator():
-        """
-        Generator function that yields SSE-formatted messages
-        Format: data: {json}\n\n
-        
-        Uses the dynamically assembled context from the webhook
-        """
         try:
-            print(f"Starting Bob analysis for incident {incidentId}")
-            
-            # Get the assembled context
+            print(f"Starting analysis for {incidentId}")
+            incident["status"] = "analyzing"
             context = incident["context"]
-            
-            # Stream Bob's analysis through the orchestrator
+
             async for event in call_bob_orchestrator(context):
-                # Store Bob's response in the incident for later retrieval
                 event_data = json.loads(event.replace("data: ", "").strip())
-                
+
+                if event_data.get("phase") == "plan" and event_data.get("done"):
+                    incident["plan_response"] = event_data.get("content", "")
+                    incident["risk_assessment"] = event_data.get("risk_assessment", {})
+
                 if event_data.get("phase") == "code" and event_data.get("done"):
-                    # Store the code fix for the approve endpoint
                     incident["bob_response"] = event_data.get("content", "")
-                
+
                 yield event
-            
-            print(f"Completed streaming analysis for {incidentId}")
-            
+
+            print(f"Bob analysis complete for {incidentId}")
+
+            # Run 4-agent pipeline after Bob completes
+            if incident.get("bob_response") and incident.get("plan_response"):
+                print(f"Starting 4-agent pipeline for {incidentId}")
+
+                async def emit_agent_event(evt):
+                    pass  # Events stored in pipeline_results
+
+                pipeline = await run_agent_pipeline(incidentId, incident)
+                incident["pipeline_results"] = pipeline
+                incident["approval_routing"] = pipeline.get("agents", {}).get("approval_router", {})
+
+                # Emit pipeline results as SSE
+                for agent_name in ["static_analysis", "test_runner", "approval_router"]:
+                    agent_result = pipeline.get("agents", {}).get(agent_name, {})
+                    agent_event = {
+                        "phase": "agent",
+                        "agent": agent_name,
+                        "status": agent_result.get("verdict", agent_result.get("recommendation", "complete")),
+                        "result": agent_result,
+                        "done": True
+                    }
+                    yield f"data: {json.dumps(agent_event)}\n\n"
+
+                # Pipeline complete event
+                complete_event = {
+                    "phase": "pipeline_complete",
+                    "verdict": pipeline.get("pipeline_verdict", "review"),
+                    "routing_reason": pipeline.get("routing_reason", ""),
+                    "all_passed": pipeline.get("all_agents_passed", False),
+                    "done": True
+                }
+                yield f"data: {json.dumps(complete_event)}\n\n"
+
+            incident["status"] = "analyzed"
+
         except Exception as e:
-            print(f"Error in event generator: {e}")
-            # Send error event
-            error_event = {
-                "phase": "error",
-                "content": f"Error during analysis: {str(e)}",
-                "done": True
-            }
-            yield f"data: {json.dumps(error_event)}\n\n"
-    
-    return StreamingResponse(
-        event_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"  # Disable nginx buffering
-        }
-    )
+            print(f"Stream error: {e}")
+            yield f"data: {json.dumps({'phase': 'error', 'content': str(e), 'done': True})}\n\n"
+
+    return StreamingResponse(event_generator(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
 
 
-# POST /approve/{incidentId} - Approve or reject Bob's fix
+# ── POST /approve/{incidentId} ──────────────────────────────────
 @app.post("/approve/{incidentId}")
 async def approve_fix(incidentId: str, approval: ApprovalRequest):
-    """
-    Handles approval/rejection of Bob's proposed fix
-    Triggers BobShell deployment if approved
-    """
-    
-    # Check if incident exists
     if incidentId not in active_incidents:
         raise HTTPException(status_code=404, detail="Incident not found")
-    
+
     if approval.approved:
-        print(f"FIX APPROVED for incident {incidentId}")
+        print(f"FIX APPROVED for {incidentId}")
         active_incidents[incidentId]["status"] = "deploying"
-        active_incidents[incidentId]["approvedAt"] = asyncio.get_event_loop().time()
-        
-        return {
-            "status": "deploying",
-            "incidentId": incidentId,
-            "message": "Fix approved - deployment initiated. Connect to /deploy-stream/{incidentId} to watch progress."
-        }
+        active_incidents[incidentId]["approved_at"] = datetime.now().isoformat()
+        return {"status": "deploying", "incidentId": incidentId}
     else:
-        print(f"Fix rejected for incident {incidentId}")
         active_incidents[incidentId]["status"] = "rejected"
-        
+        return {"status": "rejected", "incidentId": incidentId}
+
+
+# ── POST /orchestrate/decision ──────────────────────────────────
+@app.post("/orchestrate/decision")
+async def receive_orchestrate_decision(decision: OrchestrateDecision):
+    """Receives approval/rejection/escalation from watsonx Orchestrate."""
+    iid = decision.incident_id
+    if iid not in active_incidents:
+        raise HTTPException(status_code=404, detail="Incident not found")
+
+    incident = active_incidents[iid]
+
+    if decision.action == "approve":
+        incident["status"] = "deploying"
+        incident["approver"] = decision.approver
+        incident["approval_reason"] = decision.reason
+        return {"status": "deploying", "incidentId": iid}
+    elif decision.action == "escalate":
+        incident["status"] = "escalated"
+        incident["escalated_to"] = decision.approver
+        incident["escalation_reason"] = decision.reason
+        return {"status": "escalated", "incidentId": iid}
+    else:
+        incident["status"] = "rejected"
+        incident["rejected_by"] = decision.approver
+        return {"status": "rejected", "incidentId": iid}
+
+
+# ── POST /orchestrate/prepare/{incidentId} ──────────────────────
+@app.post("/orchestrate/prepare/{incidentId}")
+async def prepare_orchestrate(incidentId: str):
+    if incidentId not in active_incidents:
+        raise HTTPException(status_code=404, detail="Incident not found")
+    incident = active_incidents[incidentId]
+    if "plan_response" not in incident:
+        raise HTTPException(status_code=400, detail="Analysis not complete")
+
+    try:
+        summary = await generate_with_granite("incident_summary",
+            f"Service: {incident.get('service')}\nRoot Cause: {incident.get('plan_response', '')[:300]}")
         return {
-            "status": "rejected",
-            "incidentId": incidentId,
-            "message": "Fix rejected by user"
+            "incident_id": incidentId,
+            "service_name": incident.get("service"),
+            "fix_summary": summary,
+            "confidence": incident.get("risk_assessment", {}).get("confidence", "medium"),
+            "pipeline_results": incident.get("pipeline_results"),
+            "dashboard_url": f"http://localhost:3000/incidents/{incidentId}"
         }
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
 
 
-# GET /deploy-stream/{incidentId} - Stream deployment progress
+# ── GET /deploy-stream/{incidentId} ─────────────────────────────
 @app.get("/deploy-stream/{incidentId}")
 async def stream_deployment(incidentId: str):
-    """
-    Streams BobShell deployment progress in real-time
-    Uses Server-Sent Events (SSE) to show audit logs
-    
-    This endpoint is called after the engineer approves the fix
-    Shows each deployment step with realistic delays
-    """
-    
-    # Check if incident exists
     if incidentId not in active_incidents:
         raise HTTPException(status_code=404, detail="Incident not found")
-    
     incident = active_incidents[incidentId]
-    
-    # Check if incident was approved
     if incident.get("status") != "deploying":
-        raise HTTPException(
-            status_code=400,
-            detail="Incident must be approved before deployment"
-        )
-    
+        raise HTTPException(status_code=400, detail="Must be approved first")
+
     async def deployment_generator():
-        """
-        Generator that streams deployment audit logs
-        Calls BobShell to execute the deployment recipe
-        """
         try:
-            print(f"Starting deployment for incident {incidentId}")
-            
-            # Get the fix diff from incident (if stored) or use empty string
             fix_diff = incident.get("fixDiff", "")
-            
-            # Stream deployment steps from BobShell
             async for event in apply_fix_and_deploy(incidentId, fix_diff):
                 yield event
-            
-            # Update incident status to resolved
-            active_incidents[incidentId]["status"] = "resolved"
-            print(f"Deployment completed for incident {incidentId}")
-            
+
+            incident["status"] = "resolved"
+            incident["resolved_at"] = datetime.now().isoformat()
+
+            # Run PostIncidentReportAgent
+            try:
+                report = await run_post_incident(incidentId, incident)
+                incident["post_incident_report"] = report
+                yield f"data: {json.dumps({'type': 'agent', 'agent': 'post_incident', 'status': 'complete', 'result': report})}\n\n"
+            except Exception as pe:
+                print(f"Post-incident report error: {pe}")
+
         except Exception as e:
-            print(f"Deployment error: {e}")
-            # Send error event
-            error_event = {
-                "type": "error",
-                "timestamp": asyncio.get_event_loop().time(),
-                "message": f"Deployment failed: {str(e)}"
-            }
-            yield f"data: {json.dumps(error_event)}\n\n"
-            
-            # Update incident status
-            active_incidents[incidentId]["status"] = "deployment_failed"
-    
-    return StreamingResponse(
-        deployment_generator(),
-        media_type="text/event-stream",
-        headers={
-            "Cache-Control": "no-cache",
-            "Connection": "keep-alive",
-            "X-Accel-Buffering": "no"
-        }
-    )
+            yield f"data: {json.dumps({'type': 'error', 'message': str(e)})}\n\n"
+            incident["status"] = "deployment_failed"
+
+    return StreamingResponse(deployment_generator(), media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
 
 
-# GET /incidents - List all active incidents
+# ── GET /incidents ───────────────────────────────────────────────
 @app.get("/incidents")
 async def get_incidents():
-    """
-    Returns all active incidents for dashboard display
-    """
     return active_incidents
 
 
-# GET /audit/{incidentId} - Get full audit trail for an incident
+# ── GET /audit/{incidentId} ─────────────────────────────────────
 @app.get("/audit/{incidentId}")
 async def get_audit_trail(incidentId: str):
-    """
-    Returns full audit trail for an incident as JSON
-    Includes incident data, analysis phases, and deployment logs
-    """
-    # Check if incident exists
     if incidentId not in active_incidents:
         raise HTTPException(status_code=404, detail="Incident not found")
-    
     incident = active_incidents[incidentId]
-    
-    # Build comprehensive audit trail
-    audit_trail = {
+    return {
         "incidentId": incidentId,
-        "incident": incident,
-        "timeline": [
-            {
-                "phase": "received",
-                "timestamp": incident.get("timestamp"),
-                "status": "Incident received from monitoring system"
-            }
-        ],
-        "analysis": {
-            "ask_phase": "Code reading and analysis completed",
-            "plan_phase": "Root cause identified: sessionCache memory leak",
-            "code_phase": "Fix generated with cleanup mechanism"
-        },
-        "deployment": {
-            "approved": incident.get("status") in ["deploying", "resolved"],
-            "approvedAt": incident.get("approvedAt"),
-            "status": incident.get("status"),
-            "logs": [
-                "Fix applied to demo-service/server.js",
-                "Test suite passed",
-                "Docker container built successfully",
-                "Deployed to IBM Cloud Code Engine",
-                "Memory normalized: 128MB (was 340MB)"
-            ] if incident.get("status") == "resolved" else []
-        },
-        "resolution": {
-            "resolved": incident.get("status") == "resolved",
-            "mttr": "4 minutes 23 seconds" if incident.get("status") == "resolved" else None,
-            "fixedBy": "IBM Bob Orchestrator"
-        }
+        "incident": {k: v for k, v in incident.items() if k != "context"},
+        "pipeline_results": incident.get("pipeline_results"),
+        "post_incident_report": incident.get("post_incident_report"),
+        "status": incident.get("status")
     }
-    
-    return audit_trail
 
 
-# Health check endpoint
+# ── GET /runbook ─────────────────────────────────────────────────
+@app.get("/runbook")
+async def get_runbook():
+    """Returns institutional memory from incident-history.json."""
+    return get_incident_history()
+
+
+# ── GET /system-health ───────────────────────────────────────────
+@app.get("/system-health")
+async def system_health():
+    """Returns health status of all IBM services."""
+    return await get_all_service_health()
+
+
+# ── GET /memory-stats ────────────────────────────────────────────
+@app.get("/memory-stats")
+async def memory_stats():
+    """Returns institutional memory statistics."""
+    return get_memory_stats()
+
+
+# ── GET /incident-queue ──────────────────────────────────────────
+@app.get("/incident-queue")
+async def get_queue():
+    return {"queue": incident_queue, "length": len(incident_queue)}
+
+
+# ── GET /health ──────────────────────────────────────────────────
 @app.get("/health")
 async def health_check():
-    """
-    Simple health check endpoint
-    """
-    return {
-        "status": "healthy",
-        "active_incidents": len(active_incidents)
-    }
+    return {"status": "healthy", "active_incidents": len(active_incidents), "queued": len(incident_queue)}
 
 
-# Run the application
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(
-        "main:app",
-        host="0.0.0.0",
-        port=8000,
-        reload=True,
-        log_level="info"
-    )
+    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True, log_level="info")
 
 # Made with Bob

@@ -1,0 +1,29 @@
+name: post_incident_agent
+description: Generates post-incident report and updates institutional memory
+instructions: |
+  After an incident is resolved, generate a comprehensive post-incident report including
+  timeline, root cause analysis, fix summary, and prevention recommendations. Append the
+  report to the institutional memory (incident-history.json) for future reference.
+model: ibm/granite-3-8b-instruct
+tools:
+  - name: generate_incident_report
+    type: api
+    endpoint: http://localhost:8000/orchestrate/post-incident
+    method: POST
+    input_schema:
+      type: object
+      properties:
+        incident_id:
+          type: string
+        timeline:
+          type: string
+        resolution_data:
+          type: object
+      required: [incident_id]
+    output_schema:
+      type: object
+      properties:
+        report:
+          type: object
+        runbook_update:
+          type: string

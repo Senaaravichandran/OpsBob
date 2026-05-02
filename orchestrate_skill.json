@@ -1,0 +1,89 @@
+{
+  "skill": {
+    "name": "review_bob_fix",
+    "displayName": "Review Bob's Production Fix",
+    "description": "When Bob proposes a production fix, route to on-call engineer for approval. If confidence is low, escalate to senior engineer.",
+    "version": "1.0.0",
+    "category": "incident_management",
+    "provider": "OpsBob",
+    "endpoint": {
+      "url": "{BACKEND_URL}/orchestrate/decision",
+      "method": "POST",
+      "contentType": "application/json"
+    },
+    "input": {
+      "type": "object",
+      "required": [
+        "incident_id",
+        "service_name",
+        "fix_summary",
+        "confidence",
+        "dashboard_url"
+      ],
+      "properties": {
+        "incident_id": {
+          "type": "string",
+          "description": "Unique identifier for the incident",
+          "example": "INC-2024-001"
+        },
+        "service_name": {
+          "type": "string",
+          "description": "Name of the affected service",
+          "example": "payments-api"
+        },
+        "fix_summary": {
+          "type": "string",
+          "description": "Bob's plain English diagnosis and proposed fix",
+          "example": "Memory leak in session cleanup. Added proper disposal in finally block."
+        },
+        "confidence": {
+          "type": "string",
+          "description": "Bob's confidence level in the proposed fix",
+          "enum": ["high", "medium", "low"],
+          "example": "high"
+        },
+        "dashboard_url": {
+          "type": "string",
+          "format": "uri",
+          "description": "Link to the full Fix Card in OpsBob dashboard",
+          "example": "https://opsbob.example.com/incidents/INC-2024-001"
+        }
+      }
+    },
+    "output": {
+      "type": "object",
+      "required": ["action"],
+      "properties": {
+        "action": {
+          "type": "string",
+          "description": "Approver's decision on the proposed fix",
+          "enum": ["approve", "escalate", "reject"]
+        },
+        "reason": {
+          "type": "string",
+          "description": "Optional comment from the approver explaining their decision",
+          "example": "Approved - fix looks good and matches the error pattern"
+        }
+      }
+    },
+    "routing": {
+      "rules": [
+        {
+          "condition": "confidence == 'low'",
+          "action": "escalate_to_senior_engineer",
+          "description": "Low confidence fixes require senior engineer review"
+        },
+        {
+          "condition": "confidence == 'high' || confidence == 'medium'",
+          "action": "route_to_oncall_engineer",
+          "description": "Standard fixes go to on-call engineer"
+        }
+      ]
+    },
+    "metadata": {
+      "tags": ["incident-response", "automation", "production-fix", "approval-workflow"],
+      "documentation": "https://github.com/opsbob/docs/orchestrate-integration",
+      "supportContact": "opsbob-support@example.com"
+    }
+  }
+}

@@ -1,440 +1,306 @@
-// OpsBob Dashboard - Enterprise production intelligence platform with real-time incident monitoring
-import { useState, useEffect } from 'react'
+import React, { useState, useEffect, useCallback } from 'react'
+import { Tag } from '@carbon/react'
+import { Activity, IbmCloud } from '@carbon/icons-react'
+import Lottie from 'lottie-react'
+import chatbotAnimation from '../public/Chatbot.json'
+
+import IncidentFeed from './components/IncidentFeed'
+import DiagnosisCard from './components/DiagnosisCard'
+import RiskAssessmentCard from './components/RiskAssessmentCard'
+import AgentPipelineStatus from './components/AgentPipelineStatus'
+import FixActions from './components/FixActions'
+import AuditTrail from './components/AuditTrail'
+import MemoryTelemetry from './components/MemoryTelemetry'
+import SystemHealthBar from './components/SystemHealthBar'
 import './Dashboard.css'
 
-const BACKEND_URL = 'http://localhost:8000'
-
 function Dashboard() {
-  const [incidents, setIncidents] = useState([])
-  const [selectedIncident, setSelectedIncident] = useState(null)
-  const [analysis, setAnalysis] = useState({
-    ask: { content: '', loading: false, complete: false },
-    plan: { content: '', loading: false, complete: false },
-    code: { content: '', loading: false, complete: false }
-  })
-  const [deploymentLogs, setDeploymentLogs] = useState([])
-  const [memoryBefore, setMemoryBefore] = useState('340 MB')
-  const [memoryAfter, setMemoryAfter] = useState('128 MB')
-  const [showMemoryAfter, setShowMemoryAfter] = useState(false)
-  const [isDeploying, setIsDeploying] = useState(false)
-  const [analyzing, setAnalyzing] = useState(false)
-  const [deploymentComplete, setDeploymentComplete] = useState(false)
-  const [mttr, setMttr] = useState('')
-  const [incidentStartTime, setIncidentStartTime] = useState(null)
+  const [incidents, setIncidents] = useState({})
+  const [activeIncidentId, setActiveIncidentId] = useState(null)
+  const [phases, setPhases] = useState({ ask: '', plan: '', code: '' })
+  const [currentPhase, setCurrentPhase] = useState(null)
+  const [riskAssessment, setRiskAssessment] = useState(null)
+  const [agentResults, setAgentResults] = useState({})
+  const [pipelineComplete, setPipelineComplete] = useState(false)
+  const [pipelineResults, setPipelineResults] = useState(null)
+  const [analysisComplete, setAnalysisComplete] = useState(false)
+  const [deploying, setDeploying] = useState(false)
+  const [resolved, setResolved] = useState(false)
+  const [deployLogs, setDeployLogs] = useState([])
+  const [memBefore, setMemBefore] = useState(null)
+  const [memAfter, setMemAfter] = useState(null)
+  const [mttr, setMttr] = useState(null)
   const [systemStatus, setSystemStatus] = useState('nominal')
 
-  // Fetch incidents on load - every 5 seconds
+  // Poll for incidents
   useEffect(() => {
-    fetchIncidents()
-    const interval = setInterval(fetchIncidents, 5000)
+    const poll = async () => {
+      try {
+        const res = await fetch('/incidents')
+        if (res.ok) {
+          const data = await res.json()
+          setIncidents(data)
+          // Update system status
+          const hasActive = Object.values(data).some(i => ['received', 'analyzing', 'deploying'].includes(i.status))
+          setSystemStatus(hasActive ? 'incident' : 'nominal')
+        }
+      } catch { /* silent */ }
+    }
+    poll()
+    const interval = setInterval(poll, 5000)
     return () => clearInterval(interval)
   }, [])
 
-  // Update system status based on incidents
-  useEffect(() => {
-    if (incidents.length > 0) {
-      setSystemStatus('incident')
-    } else {
-      setSystemStatus('nominal')
-    }
-  }, [incidents])
+  // Analyze with Bob
+  const handleAnalyze = useCallback((incidentId) => {
+    setActiveIncidentId(incidentId)
+    setPhases({ ask: '', plan: '', code: '' })
+    setCurrentPhase('ask')
+    setRiskAssessment(null)
+    setAgentResults({})
+    setPipelineComplete(false)
+    setPipelineResults(null)
+    setAnalysisComplete(false)
+    setDeploying(false)
+    setResolved(false)
+    setDeployLogs([])
+    setMemBefore(null)
+    setMemAfter(null)
+    setMttr(null)
 
-  const fetchIncidents = async () => {
-    try {
-      const response = await fetch(`${BACKEND_URL}/incidents`)
-      const data = await response.json()
-      setIncidents(Object.values(data))
-    } catch (error) {
-      console.error('Error fetching incidents:', error)
-    }
-  }
-
-  const analyzeIncident = async (incident) => {
-    setSelectedIncident(incident)
-    setAnalyzing(true)
-    setDeploymentComplete(false)
-    setShowMemoryAfter(false)
-    setIncidentStartTime(Date.now())
-    setDeploymentLogs([])
-    
-    setAnalysis({
-      ask: { content: '', loading: true, complete: false },
-      plan: { content: '', loading: false, complete: false },
-      code: { content: '', loading: false, complete: false }
-    })
-
-    // Connect to SSE stream
-    const eventSource = new EventSource(`${BACKEND_URL}/stream/${incident.incidentId}`)
+    const eventSource = new EventSource(`/stream/${incidentId}`)
 
     eventSource.onmessage = (event) => {
-      const data = JSON.parse(event.data)
-      
-      if (data.phase === 'ask') {
-        setAnalysis(prev => ({
-          ...prev,
-          ask: {
-            content: prev.ask.content + data.content,
-            loading: !data.done,
-            complete: data.done
+      try {
+        const data = JSON.parse(event.data)
+
+        // Bob phases
+        if (['ask', 'plan', 'code'].includes(data.phase)) {
+          setCurrentPhase(data.phase)
+          if (data.content) {
+            setPhases(prev => ({
+              ...prev,
+              [data.phase]: (prev[data.phase] || '') + data.content
+            }))
           }
-        }))
-        if (data.done) {
-          setAnalysis(prev => ({
+          if (data.done && data.phase === 'plan' && data.risk_assessment) {
+            setRiskAssessment(data.risk_assessment)
+            const mem = data.risk_assessment?.blast_radius
+            if (incidents[incidentId]?.mem_growth_mb) {
+              setMemBefore(Math.round(incidents[incidentId].mem_growth_mb + 50))
+            } else {
+              setMemBefore(340)
+            }
+          }
+          if (data.done && data.phase === 'code') {
+            setPhases(prev => ({ ...prev, code: data.content || prev.code }))
+          }
+        }
+
+        // Agent pipeline events
+        if (data.phase === 'agent') {
+          setAgentResults(prev => ({
             ...prev,
-            plan: { ...prev.plan, loading: true }
+            [data.agent]: data.result || { status: data.status, verdict: data.status }
           }))
         }
-      } else if (data.phase === 'plan') {
-        setAnalysis(prev => ({
-          ...prev,
-          plan: {
-            content: prev.plan.content + data.content,
-            loading: !data.done,
-            complete: data.done
-          }
-        }))
-        if (data.done) {
-          setAnalysis(prev => ({
-            ...prev,
-            code: { ...prev.code, loading: true }
-          }))
+
+        // Pipeline complete
+        if (data.phase === 'pipeline_complete') {
+          setPipelineComplete(true)
+          setPipelineResults({ agents: agentResults, ...data })
+          setAnalysisComplete(true)
+          setCurrentPhase(null)
         }
-      } else if (data.phase === 'code') {
-        setAnalysis(prev => ({
-          ...prev,
-          code: {
-            content: prev.code.content + data.content,
-            loading: !data.done,
-            complete: data.done
-          }
-        }))
-        if (data.done) {
-          setAnalyzing(false)
+
+        // Complete (no pipeline) — analysis only
+        if (data.phase === 'complete' || (data.done && data.phase === 'code' && !data.agent)) {
+          // Will wait for pipeline events
         }
-      } else if (data.phase === 'complete') {
-        setAnalyzing(false)
-        eventSource.close()
+
+        // Error
+        if (data.phase === 'error') {
+          setCurrentPhase(null)
+          console.error('Analysis error:', data.content)
+        }
+      } catch (e) {
+        console.error('Parse error:', e)
       }
     }
 
     eventSource.onerror = () => {
-      setAnalyzing(false)
       eventSource.close()
+      if (!analysisComplete) {
+        setAnalysisComplete(true)
+        setCurrentPhase(null)
+      }
     }
-  }
+  }, [incidents])
 
-  const approveFix = async () => {
-    if (!selectedIncident) return
+  // Approve and deploy
+  const handleApprove = useCallback(async () => {
+    if (!activeIncidentId) return
+    setDeploying(true)
 
     try {
-      await fetch(`${BACKEND_URL}/approve/${selectedIncident.incidentId}`, {
+      await fetch(`/approve/${activeIncidentId}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ approved: true })
       })
 
-      setIsDeploying(true)
-      setDeploymentLogs([])
-
-      // Connect to deployment stream
-      const eventSource = new EventSource(`${BACKEND_URL}/deploy-stream/${selectedIncident.incidentId}`)
+      // Stream deployment
+      const eventSource = new EventSource(`/deploy-stream/${activeIncidentId}`)
+      const startTime = Date.now()
 
       eventSource.onmessage = (event) => {
-        const data = JSON.parse(event.data)
-        
-        if (data.type === 'log') {
-          setDeploymentLogs(prev => [...prev, data])
-        } else if (data.type === 'completion' && data.status === 'resolved') {
-          // Calculate MTTR
-          const endTime = Date.now()
-          const durationMs = endTime - incidentStartTime
-          const minutes = Math.floor(durationMs / 60000)
-          const seconds = Math.floor((durationMs % 60000) / 1000)
-          const mttrString = `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`
-          
-          setMttr(mttrString)
-          setShowMemoryAfter(true)
-          setIsDeploying(false)
-          setDeploymentComplete(true)
-          eventSource.close()
+        try {
+          const data = JSON.parse(event.data)
+
+          if (data.type === 'log') {
+            setDeployLogs(prev => [...prev, data])
+          }
+
+          if (data.type === 'completion') {
+            const elapsed = Math.round((Date.now() - startTime) / 1000)
+            const mins = Math.floor(elapsed / 60)
+            const secs = elapsed % 60
+            setMttr(`${mins}m ${secs}s`)
+            setMemAfter(data.memoryAfter ? parseInt(data.memoryAfter) : 128)
+            setResolved(true)
+            setDeploying(false)
+            eventSource.close()
+          }
+
+          if (data.type === 'agent') {
+            setDeployLogs(prev => [...prev, {
+              type: 'agent',
+              message: `[${data.agent}] ${data.status}`,
+              timestamp: new Date().toISOString()
+            }])
+          }
+
+          if (data.type === 'error') {
+            setDeployLogs(prev => [...prev, { ...data, type: 'error' }])
+            setDeploying(false)
+            eventSource.close()
+          }
+        } catch (e) {
+          console.error('Deploy parse error:', e)
         }
       }
 
       eventSource.onerror = () => {
         eventSource.close()
-        setIsDeploying(false)
+        setDeploying(false)
       }
-    } catch (error) {
-      console.error('Error approving fix:', error)
-      setIsDeploying(false)
+    } catch (e) {
+      console.error('Approve error:', e)
+      setDeploying(false)
     }
-  }
+  }, [activeIncidentId])
 
-  const escalateToHuman = () => {
-    alert('Escalating to human engineer...')
-  }
-
-  const renderDiffLine = (line, index) => {
-    if (line.startsWith('+')) {
-      return <div key={index} className="diff-line diff-add">{line}</div>
-    } else if (line.startsWith('-')) {
-      return <div key={index} className="diff-line diff-remove">{line}</div>
-    } else {
-      return <div key={index} className="diff-line">{line}</div>
-    }
-  }
-
-  const renderAnalysisContent = (content, phase) => {
-    if (!content) return null
-    
-    if (phase === 'code') {
-      const lines = content.split('\n')
-      return (
-        <div className="code-diff">
-          {lines.map((line, i) => renderDiffLine(line, i))}
-        </div>
-      )
-    }
-    
-    return <div className="analysis-text">{content}</div>
-  }
-
-  const getPhaseStatus = (phase) => {
-    if (phase.complete) return 'COMPLETE'
-    if (phase.loading) return 'PROCESSING'
-    return 'PENDING'
-  }
-
-  const getPhaseStatusClass = (phase) => {
-    if (phase.complete) return 'status-complete'
-    if (phase.loading) return 'status-processing'
-    return 'status-pending'
-  }
-
-  const formatLogMessage = (log) => {
-    const msg = log.message
-    if (msg.includes('✓')) return <span className="log-success">{msg}</span>
-    if (msg.includes('✗')) return <span className="log-error">{msg}</span>
-    if (msg.includes('IBM') || msg.includes('Cloud')) return <span className="log-deploy">{msg}</span>
-    return <span className="log-normal">{msg}</span>
-  }
-
-  const allPhasesComplete = analysis.ask.complete && analysis.plan.complete && analysis.code.complete
+  const handleEscalate = useCallback(() => {
+    if (!activeIncidentId) return
+    setDeployLogs(prev => [...prev, {
+      type: 'info',
+      message: 'Incident escalated to senior engineer',
+      timestamp: new Date().toISOString()
+    }])
+  }, [activeIncidentId])
 
   return (
     <div className="dashboard">
-      {/* Header Bar */}
-      <header className="dashboard-header">
-        <div className="header-left">
-          <img src="/logo.png" alt="OpsBob" className="header-logo" />
-          <span className="header-title">OPSBOB</span>
+      {/* Header */}
+      <header className="dashboard__header">
+        <div className="dashboard__header-left">
+          <span className="dashboard__logo">
+            <span className="dashboard__logo-ops">OPS</span>
+            <span className="dashboard__logo-bob">BOB</span>
+          </span>
         </div>
-        <div className="header-center">
-          PRODUCTION INTELLIGENCE PLATFORM
+        <div className="dashboard__header-center">
+          <span className="dashboard__header-title">PRODUCTION INTELLIGENCE PLATFORM</span>
         </div>
-        <div className="header-right">
-          <div className="system-status">
-            <span className={`status-dot ${systemStatus === 'nominal' ? 'status-nominal' : 'status-incident'}`}></span>
-            <span className="status-label">
-              {systemStatus === 'nominal' ? 'ALL SYSTEMS NOMINAL' : 'INCIDENT ACTIVE'}
-            </span>
+        <div className="dashboard__header-right">
+          <div className={`dashboard__status dashboard__status--${systemStatus}`}>
+            <span className="dashboard__status-dot" />
+            <span>{systemStatus === 'incident' ? 'INCIDENT ACTIVE' : 'ALL SYSTEMS NOMINAL'}</span>
           </div>
-          <span className="ibm-badge">IBM</span>
+          <Tag type="blue" size="sm" renderIcon={IbmCloud}>IBM</Tag>
         </div>
       </header>
 
-      {/* Three Panel Layout */}
-      <div className="dashboard-content">
-        {/* LEFT PANEL - Incident Feed */}
-        <aside className="panel panel-left">
-          <div className="panel-header">
-            <span className="panel-title">LIVE INCIDENTS</span>
-            {incidents.length > 0 && (
-              <span className="incident-count">{incidents.length}</span>
+      {/* Three-panel layout */}
+      <main className="dashboard__main">
+        {/* Left Panel — Incident Feed */}
+        <section className="dashboard__panel dashboard__panel--left">
+          <IncidentFeed
+            incidents={incidents}
+            onAnalyze={handleAnalyze}
+            analyzingId={activeIncidentId}
+          />
+        </section>
+
+        {/* Center Panel — Analysis Engine */}
+        <section className="dashboard__panel dashboard__panel--center">
+          <div className="dashboard__panel-header">
+            <Activity size={16} />
+            <span>BOB ANALYSIS ENGINE</span>
+            {activeIncidentId && (
+              <Tag type="blue" size="sm">{activeIncidentId}</Tag>
             )}
           </div>
-          
-          <div className="incident-list">
-            {incidents.length === 0 ? (
-              <div className="empty-state">
-                <span className="status-dot status-nominal"></span>
-                <span className="empty-text">MONITORING ACTIVE</span>
+          <div className="dashboard__panel-content">
+            {!activeIncidentId ? (
+              <div className="dashboard__empty-state">
+                <div className="dashboard__empty-icon">
+                  <Lottie 
+                    animationData={chatbotAnimation} 
+                    loop={true}
+                    style={{ width: 200, height: 200 }}
+                  />
+                </div>
+                <span>Select an incident to begin analysis</span>
               </div>
             ) : (
-              incidents.map((incident) => (
-                <div
-                  key={incident.incidentId}
-                  className={`incident-card ${selectedIncident?.incidentId === incident.incidentId ? 'selected' : ''}`}
-                >
-                  <div className="incident-header">
-                    <span className="incident-service">{incident.service}</span>
-                    <span className={`severity-badge severity-${incident.severity.toLowerCase()}`}>
-                      {incident.severity}
-                    </span>
-                  </div>
-                  <div className="incident-type">{incident.type}</div>
-                  <div className="incident-time">
-                    {new Date(incident.startTime || Date.now()).toLocaleTimeString()}
-                  </div>
-                  {incident.memory && (
-                    <div className="incident-memory">Memory: {incident.memory}</div>
-                  )}
-                  <button
-                    className="analyze-button"
-                    onClick={() => analyzeIncident(incident)}
-                  >
-                    ANALYZE WITH BOB
-                  </button>
-                </div>
-              ))
+              <>
+                <DiagnosisCard phases={phases} currentPhase={currentPhase} />
+                {riskAssessment && <RiskAssessmentCard assessment={riskAssessment} />}
+                {Object.keys(agentResults).length > 0 && (
+                  <AgentPipelineStatus
+                    agentResults={agentResults}
+                    pipelineComplete={pipelineComplete}
+                  />
+                )}
+              </>
             )}
           </div>
-        </aside>
+        </section>
 
-        {/* CENTER PANEL - Bob Analysis */}
-        <main className="panel panel-center">
-          <div className="panel-header">
-            <span className="panel-title">BOB ANALYSIS ENGINE</span>
-          </div>
+        {/* Right Panel — Command & Control */}
+        <section className="dashboard__panel dashboard__panel--right">
+          <FixActions
+            analysisComplete={analysisComplete}
+            pipelineResults={pipelineResults}
+            onApprove={handleApprove}
+            onEscalate={handleEscalate}
+            deploying={deploying}
+          />
+          <AuditTrail logs={deployLogs} />
+          <MemoryTelemetry
+            memBefore={memBefore}
+            memAfter={memAfter}
+            mttr={mttr}
+            resolved={resolved}
+          />
+        </section>
+      </main>
 
-          {!selectedIncident ? (
-            <div className="empty-analysis">
-              <p>Select an incident to begin analysis</p>
-            </div>
-          ) : (
-            <div className="analysis-container">
-              {/* ASK Phase */}
-              <div className="analysis-block">
-                <div className="analysis-block-header">
-                  <div className="phase-info">
-                    <span className="phase-icon">🔍</span>
-                    <span className="phase-name">ASK PHASE</span>
-                  </div>
-                  <span className={`phase-status ${getPhaseStatusClass(analysis.ask)}`}>
-                    {getPhaseStatus(analysis.ask)}
-                  </span>
-                </div>
-                <div className="analysis-content ask-phase">
-                  {renderAnalysisContent(analysis.ask.content || 'Analyzing source code...', 'ask')}
-                </div>
-              </div>
-
-              {/* PLAN Phase */}
-              <div className="analysis-block">
-                <div className="analysis-block-header">
-                  <div className="phase-info">
-                    <span className="phase-icon">📋</span>
-                    <span className="phase-name">PLAN PHASE</span>
-                  </div>
-                  <span className={`phase-status ${getPhaseStatusClass(analysis.plan)}`}>
-                    {getPhaseStatus(analysis.plan)}
-                  </span>
-                </div>
-                <div className="analysis-content plan-phase">
-                  {renderAnalysisContent(analysis.plan.content || 'Identifying root cause...', 'plan')}
-                </div>
-              </div>
-
-              {/* CODE Phase */}
-              <div className="analysis-block">
-                <div className="analysis-block-header">
-                  <div className="phase-info">
-                    <span className="phase-icon">💻</span>
-                    <span className="phase-name">CODE PHASE</span>
-                  </div>
-                  <span className={`phase-status ${getPhaseStatusClass(analysis.code)}`}>
-                    {getPhaseStatus(analysis.code)}
-                  </span>
-                </div>
-                <div className="analysis-content code-phase">
-                  {renderAnalysisContent(analysis.code.content || 'Generating fix...', 'code')}
-                </div>
-              </div>
-
-              {/* Analysis Complete Banner */}
-              {allPhasesComplete && !deploymentComplete && (
-                <div className="analysis-complete">
-                  BOB ANALYSIS COMPLETE
-                </div>
-              )}
-            </div>
-          )}
-        </main>
-
-        {/* RIGHT PANEL - Command & Control */}
-        <aside className="panel panel-right">
-          {/* Action Buttons */}
-          <div className="action-section">
-            <div className="section-title">RESPONSE ACTIONS</div>
-            <button
-              className="action-button approve-button"
-              onClick={approveFix}
-              disabled={!allPhasesComplete || isDeploying || deploymentComplete}
-            >
-              APPROVE & DEPLOY FIX
-            </button>
-            <div className="approval-note">HUMAN APPROVAL REQUIRED</div>
-            <button
-              className="action-button escalate-button"
-              onClick={escalateToHuman}
-              disabled={isDeploying}
-            >
-              ESCALATE TO HUMAN
-            </button>
-          </div>
-
-          {/* BobShell Audit Log */}
-          <div className="audit-section">
-            <div className="section-title">BOBSHELL AUDIT TRAIL</div>
-            <div className="audit-log">
-              {deploymentLogs.length === 0 ? (
-                <div className="log-empty">Waiting for deployment...</div>
-              ) : (
-                deploymentLogs.map((log, i) => (
-                  <div key={i} className="log-entry">
-                    <span className="log-timestamp">
-                      [{new Date(log.timestamp).toLocaleTimeString()}]
-                    </span>{' '}
-                    {formatLogMessage(log)}
-                  </div>
-                ))
-              )}
-            </div>
-          </div>
-
-          {/* Memory Telemetry */}
-          <div className="telemetry-section">
-            <div className="section-title">MEMORY TELEMETRY</div>
-            <div className="telemetry-stats">
-              <div className="stat-box stat-before">
-                <div className="stat-label">BEFORE</div>
-                <div className="stat-value">{memoryBefore}</div>
-                <div className="stat-status status-degraded">DEGRADED</div>
-              </div>
-              {showMemoryAfter && (
-                <div className="stat-box stat-after">
-                  <div className="stat-label">AFTER</div>
-                  <div className="stat-value">{memoryAfter}</div>
-                  <div className="stat-status status-nominal-text">NOMINAL</div>
-                </div>
-              )}
-            </div>
-          </div>
-
-          {/* MTTR Display */}
-          {deploymentComplete && (
-            <div className="mttr-section">
-              <div className="mttr-label">MEAN TIME TO RESOLUTION</div>
-              <div className="mttr-value">{mttr}</div>
-              <div className="mttr-footer">INCIDENT RESOLVED BY IBM BOB</div>
-            </div>
-          )}
-        </aside>
-      </div>
+      {/* System Health Bar */}
+      <SystemHealthBar />
     </div>
   )
 }
 
 export default Dashboard
-
-// Made with Bob

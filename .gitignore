@@ -2,7 +2,8 @@
 .env
 .env.local
 .env.*.local
-.env.example
+# Keep .env.example for documentation
+# .env.example
 
 
 # Python
@@ -193,3 +194,31 @@ coverage/
 connect.lock
 typings/
 .angular/
+
+# Project-specific
+# Kiro AI settings (may contain sensitive data)
+.kiro/
+
+# Runtime data and history
+incident-history.json
+memory/context.txt
+
+# Shell scripts output
+*.sh.log
+
+# Package lock files (optional - uncomment if you want to ignore them)
+# package-lock.json
+# npm-shrinkwrap.json
+
+# Frontend build artifacts
+frontend/dist/
+frontend/.vite/
+
+# MCP server build artifacts
+mcp-server/dist/
+
+# Demo service debug files
+demo-service/debug/traces.js
+
+# Documentation drafts (keep final docs)
+# docs/bob_task_*.md

@@ -1,18 +1,32 @@
-// OpsBob App - Main entry point managing landing page and dashboard navigation
-import { useState } from 'react'
+import React, { useState } from 'react'
+import { Theme } from '@carbon/react'
 import Landing from './Landing'
 import Dashboard from './Dashboard'
 
 function App() {
-  const [showLanding, setShowLanding] = useState(true)
+  const [showDashboard, setShowDashboard] = useState(false)
+  const [transitioning, setTransitioning] = useState(false)
 
-  if (showLanding) {
-    return <Landing onEnter={() => setShowLanding(false)} />
+  const handleEnterDashboard = () => {
+    setTransitioning(true)
+    setTimeout(() => {
+      setShowDashboard(true)
+      setTransitioning(false)
+    }, 600)
   }
 
-  return <Dashboard />
+  return (
+    <Theme theme="g100">
+      {showDashboard ? (
+        <Dashboard />
+      ) : (
+        <Landing
+          onEnter={handleEnterDashboard}
+          transitioning={transitioning}
+        />
+      )}
+    </Theme>
+  )
 }
 
 export default App
-
-// Made with Bob
