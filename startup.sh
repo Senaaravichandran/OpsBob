@@ -4,6 +4,12 @@
 
 set -e  # Exit on any error
 
+set -a
+if [ -f ".env" ]; then
+    source .env
+fi
+set +a
+
 echo "=========================================="
 echo "OpsBob System Startup"
 echo "=========================================="
@@ -12,19 +18,13 @@ echo ""
 # ============================================================================
 # Environment Variable Validation
 # ============================================================================
-echo "[1/4] Validating environment variables..."
+echo "[1/4] Validating environment and CLI dependencies..."
 
 REQUIRED_VARS=(
-    "BOB_API_KEY"
-    "BOB_API_URL"
-    "INSTANA_BASE_URL"
-    "INSTANA_API_TOKEN"
-    "IBM_CLOUD_API_KEY"
-    "IBM_CLOUD_REGION"
-    "CODE_ENGINE_PROJECT"
-    "ICR_NAMESPACE"
-    "CODE_ENGINE_APP_NAME"
     "SOURCE_FILES_PATH"
+    "WATSONX_API_KEY"
+    "WATSONX_PROJECT_ID"
+    "WATSONX_URL"
 )
 
 MISSING_VARS=()
@@ -46,7 +46,30 @@ if [ ${#MISSING_VARS[@]} -gt 0 ]; then
     exit 1
 fi
 
+for cmd in bob gcloud node python; do
+    if ! command -v "$cmd" >/dev/null 2>&1; then
+        echo "❌ ERROR: Required command not found on PATH: $cmd"
+        exit 1
+    fi
+done
+
+GCLOUD_PROJECT=${GCLOUD_PROJECT:-$(gcloud config get-value project 2>/dev/null || true)}
+GCLOUD_REGION=${GCLOUD_REGION:-$(gcloud config get-value compute/region 2>/dev/null || true)}
+
+if [ -z "$GCLOUD_REGION" ]; then
+    GCLOUD_REGION=$(gcloud config get-value run/region 2>/dev/null || true)
+fi
+
+if [ -z "$GCLOUD_PROJECT" ] || [ -z "$GCLOUD_REGION" ]; then
+    echo "❌ ERROR: gcloud project or region is not configured"
+    echo "Project: ${GCLOUD_PROJECT:-<empty>}"
+    echo "Region: ${GCLOUD_REGION:-<empty>}"
+    exit 1
+fi
+
 echo "✓ All required environment variables are set"
+echo "✓ Bob shell and gcloud are available"
+echo "✓ gcloud project: $GCLOUD_PROJECT | region: $GCLOUD_REGION"
 echo ""
 
 # ============================================================================

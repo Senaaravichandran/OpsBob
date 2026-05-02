@@ -1,23 +1,15 @@
-# Use Node.js 18 Alpine for smaller image size
 FROM node:18-alpine
 
-# Set working directory
 WORKDIR /app
 
-# Copy package files
 COPY package*.json ./
+RUN npm install --omit=dev
 
-# Install dependencies
-RUN npm install --production
+COPY . .
 
-# Copy application code
-COPY server.js ./
-
-# Expose port 3000
-EXPOSE 3000
-
-# Set environment to production
 ENV NODE_ENV=production
+ENV PORT=8080
 
-# Run the application
-CMD ["node", "server.js"]
+EXPOSE 8080
+
+CMD ["npm", "start"]

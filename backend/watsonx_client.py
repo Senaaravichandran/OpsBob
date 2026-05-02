@@ -8,6 +8,7 @@ import json
 import aiohttp
 from typing import Dict, Any
 from dotenv import load_dotenv
+from iam_auth import get_iam_token
 
 # Load environment variables
 load_dotenv()
@@ -15,7 +16,17 @@ load_dotenv()
 # watsonx.ai configuration
 WATSONX_API_KEY = os.getenv("WATSONX_API_KEY")
 WATSONX_PROJECT_ID = os.getenv("WATSONX_PROJECT_ID")
+WATSONX_SPACE_ID = os.getenv("WATSONX_SPACE_ID")
 WATSONX_URL = os.getenv("WATSONX_URL", "https://us-south.ml.cloud.ibm.com")
+WATSONX_MODEL_ID = os.getenv("WATSONX_MODEL_ID", "ibm/granite-4-h-small")
+
+
+def _build_watsonx_scope() -> Dict[str, str]:
+    if WATSONX_SPACE_ID:
+        return {"space_id": WATSONX_SPACE_ID}
+    if WATSONX_PROJECT_ID:
+        return {"project_id": WATSONX_PROJECT_ID}
+    return {}
 
 
 async def call_watsonx_risk_assessment(bob_plan_text: str) -> Dict[str, Any]:
@@ -47,7 +58,7 @@ async def call_watsonx_risk_assessment(bob_plan_text: str) -> Dict[str, Any]:
     }
     
     # Validate configuration
-    if not WATSONX_API_KEY or not WATSONX_PROJECT_ID:
+    if not WATSONX_API_KEY or not _build_watsonx_scope():
         print("WARNING: watsonx.ai credentials not configured, using fallback")
         return fallback_response
     
@@ -55,9 +66,10 @@ async def call_watsonx_risk_assessment(bob_plan_text: str) -> Dict[str, Any]:
         # Construct the API endpoint
         endpoint = f"{WATSONX_URL}/ml/v1/text/generation?version=2023-05-29"
         
-        # Prepare headers
+        # Prepare headers — exchange API key for a short-lived IAM access token
+        iam_token = await get_iam_token(WATSONX_API_KEY)
         headers = {
-            "Authorization": f"Bearer {WATSONX_API_KEY}",
+            "Authorization": f"Bearer {iam_token}",
             "Content-Type": "application/json",
             "Accept": "application/json"
         }
@@ -70,13 +82,13 @@ confidence (high/medium/low), risk_level (high/medium/low), estimated_blast_radi
         
         # Prepare request payload
         payload = {
-            "model_id": "ibm/granite-3-8b-instruct",
-            "project_id": WATSONX_PROJECT_ID,
+            "model_id": WATSONX_MODEL_ID,
             "input": input_text,
             "parameters": {
                 "max_new_tokens": 200,
                 "temperature": 0
-            }
+            },
+            **_build_watsonx_scope()
         }
         
         # Make the API call
@@ -160,7 +172,7 @@ async def generate_with_granite(task_type: str, context: str) -> str:
     }
     
     # Validate configuration
-    if not WATSONX_API_KEY or not WATSONX_PROJECT_ID:
+    if not WATSONX_API_KEY or not _build_watsonx_scope():
         print(f"WARNING: watsonx.ai credentials not configured for {task_type}")
         return fallback_responses.get(task_type, "watsonx.ai unavailable")
     
@@ -168,9 +180,10 @@ async def generate_with_granite(task_type: str, context: str) -> str:
         # Construct the API endpoint
         endpoint = f"{WATSONX_URL}/ml/v1/text/generation?version=2023-05-29"
         
-        # Prepare headers
+        # Prepare headers — exchange API key for a short-lived IAM access token
+        iam_token = await get_iam_token(WATSONX_API_KEY)
         headers = {
-            "Authorization": f"Bearer {WATSONX_API_KEY}",
+            "Authorization": f"Bearer {iam_token}",
             "Content-Type": "application/json",
             "Accept": "application/json"
         }
@@ -186,13 +199,13 @@ async def generate_with_granite(task_type: str, context: str) -> str:
         
         # Prepare request payload
         payload = {
-            "model_id": "ibm/granite-3-8b-instruct",
-            "project_id": WATSONX_PROJECT_ID,
+            "model_id": WATSONX_MODEL_ID,
             "input": input_text,
             "parameters": {
                 "max_new_tokens": 200,
                 "temperature": 0
-            }
+            },
+            **_build_watsonx_scope()
         }
         
         # Make the API call

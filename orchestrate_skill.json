@@ -7,7 +7,7 @@
     "category": "incident_management",
     "provider": "OpsBob",
     "endpoint": {
-      "url": "{BACKEND_URL}/orchestrate/decision",
+      "url": "https://opsbob-backend-4i6z7vcvfa-el.a.run.app/orchestrate/decision",
       "method": "POST",
       "contentType": "application/json"
     },

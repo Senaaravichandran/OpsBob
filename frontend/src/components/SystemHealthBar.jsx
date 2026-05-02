@@ -18,7 +18,7 @@ function SystemHealthBar() {
   }, [])
 
   const services = [
-    { key: 'bob_api', label: 'BOB API' },
+    { key: 'bob_shell', label: 'BOB SHELL' },
     { key: 'watsonx_ai', label: 'WATSONX.AI' },
     { key: 'orchestrate', label: 'ORCHESTRATE' },
     { key: 'instana', label: 'INSTANA' },

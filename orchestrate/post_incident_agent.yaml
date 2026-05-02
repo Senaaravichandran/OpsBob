@@ -4,7 +4,7 @@ instructions: |
   After an incident is resolved, generate a comprehensive post-incident report including
   timeline, root cause analysis, fix summary, and prevention recommendations. Append the
   report to the institutional memory (incident-history.json) for future reference.
-model: ibm/granite-3-8b-instruct
+model: ibm/granite-4-h-small
 tools:
   - name: generate_incident_report
     type: api

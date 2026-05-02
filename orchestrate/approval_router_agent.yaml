@@ -4,7 +4,7 @@ instructions: |
   You evaluate the combined signals from the risk assessment, static analysis, and test
   results to determine the approval routing. Pure logic — no external API calls needed.
   Routes: auto-approve (all green), review (medium signals), escalate (any failures).
-model: ibm/granite-3-8b-instruct
+model: ibm/granite-4-h-small
 tools:
   - name: route_fix_approval
     type: api

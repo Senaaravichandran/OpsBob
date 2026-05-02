@@ -4,7 +4,7 @@ instructions: |
   You are a senior security engineer. When given a code diff and root cause analysis,
   review the fix for null pointer risks, injection vulnerabilities, logic errors,
   and whether it actually addresses the root cause. Return a verdict of PASS, WARN, or FAIL.
-model: ibm/granite-3-8b-instruct
+model: ibm/granite-4-h-small
 tools:
   - name: review_code_fix
     type: api

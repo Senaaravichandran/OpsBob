@@ -17,18 +17,30 @@ Agent Types:
 import asyncio
 import json
 import os
+import shutil
 import subprocess
 from datetime import datetime
 from typing import Dict, Any, Optional
 from dotenv import load_dotenv
+from iam_auth import get_iam_token
 
 load_dotenv()
 
 WATSONX_API_KEY = os.getenv("WATSONX_API_KEY")
 WATSONX_PROJECT_ID = os.getenv("WATSONX_PROJECT_ID")
+WATSONX_SPACE_ID = os.getenv("WATSONX_SPACE_ID")
 WATSONX_URL = os.getenv("WATSONX_URL", "https://us-south.ml.cloud.ibm.com")
+WATSONX_MODEL_ID = os.getenv("WATSONX_MODEL_ID", "ibm/granite-4-h-small")
 
 AGENT_TIMEOUT = 15  # seconds — never block the demo
+
+
+def _build_watsonx_scope() -> Dict[str, str]:
+    if WATSONX_SPACE_ID:
+        return {"space_id": WATSONX_SPACE_ID}
+    if WATSONX_PROJECT_ID:
+        return {"project_id": WATSONX_PROJECT_ID}
+    return {}
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -57,7 +69,7 @@ async def run_static_analysis(incident_id: str, bob_diff: str, bob_plan: str) ->
         "duration_ms": 0
     }
 
-    if not WATSONX_API_KEY or not WATSONX_PROJECT_ID:
+    if not WATSONX_API_KEY or not _build_watsonx_scope():
         print(f"[AGENT_FALLBACK] StaticAnalysisAgent: credentials not configured")
         return fallback_result
 
@@ -86,16 +98,17 @@ Return ONLY valid JSON with these fields:
 """
 
         endpoint = f"{WATSONX_URL}/ml/v1/text/generation?version=2023-05-29"
+        iam_token = await get_iam_token(WATSONX_API_KEY)
         headers = {
-            "Authorization": f"Bearer {WATSONX_API_KEY}",
+            "Authorization": f"Bearer {iam_token}",
             "Content-Type": "application/json",
             "Accept": "application/json"
         }
         payload = {
-            "model_id": "ibm/granite-3-8b-instruct",
-            "project_id": WATSONX_PROJECT_ID,
+            "model_id": WATSONX_MODEL_ID,
             "input": prompt,
-            "parameters": {"max_new_tokens": 300, "temperature": 0}
+            "parameters": {"max_new_tokens": 300, "temperature": 0},
+            **_build_watsonx_scope()
         }
 
         async with aiohttp.ClientSession() as session:
@@ -188,10 +201,12 @@ async def run_tests(incident_id: str, working_dir: str = None) -> Dict[str, Any]
     start = datetime.now()
 
     try:
+        npm_command = shutil.which("npm.cmd") or shutil.which("npm") or "npm"
+
         # Run npm test with timeout
         result = await asyncio.wait_for(
             asyncio.create_subprocess_exec(
-                "npm", "test", "--if-present",
+                npm_command, "test", "--if-present",
                 cwd=working_dir,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.STDOUT
@@ -381,7 +396,7 @@ async def generate_post_incident_report(
         "duration_ms": 0
     }
 
-    if not WATSONX_API_KEY or not WATSONX_PROJECT_ID:
+    if not WATSONX_API_KEY or not _build_watsonx_scope():
         print(f"[AGENT_FALLBACK] PostIncidentReportAgent: credentials not configured")
         _append_to_history(incident_id, fallback_report)
         return fallback_report
@@ -413,16 +428,17 @@ Return ONLY valid JSON with these fields:
 """
 
         endpoint = f"{WATSONX_URL}/ml/v1/text/generation?version=2023-05-29"
+        iam_token = await get_iam_token(WATSONX_API_KEY)
         headers = {
-            "Authorization": f"Bearer {WATSONX_API_KEY}",
+            "Authorization": f"Bearer {iam_token}",
             "Content-Type": "application/json",
             "Accept": "application/json"
         }
         payload = {
-            "model_id": "ibm/granite-3-8b-instruct",
-            "project_id": WATSONX_PROJECT_ID,
+            "model_id": WATSONX_MODEL_ID,
             "input": prompt,
-            "parameters": {"max_new_tokens": 400, "temperature": 0}
+            "parameters": {"max_new_tokens": 400, "temperature": 0},
+            **_build_watsonx_scope()
         }
 
         async with aiohttp.ClientSession() as session:

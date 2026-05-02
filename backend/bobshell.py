@@ -1,6 +1,6 @@
 """
 BobShell - Automated Deployment Orchestrator
-Executes deployment recipe when engineer approves the fix
+Executes the Cloud Run deployment recipe when an engineer approves the fix
 """
 
 import asyncio
@@ -15,32 +15,33 @@ from watsonx_client import generate_with_granite
 # Load environment variables
 load_dotenv()
 
-# Get IBM Cloud credentials
-IBM_CLOUD_API_KEY = os.getenv("IBM_CLOUD_API_KEY")
-IBM_CLOUD_REGION = os.getenv("IBM_CLOUD_REGION", "jp-tok")
-CODE_ENGINE_PROJECT = os.getenv("CODE_ENGINE_PROJECT", "opsbob-demo")
-ICR_NAMESPACE = os.getenv("ICR_NAMESPACE", "opsbob")
-CODE_ENGINE_APP_NAME = os.getenv("CODE_ENGINE_APP_NAME", "payments-api")
+CLOUD_RUN_SERVICE_NAME = os.getenv("CLOUD_RUN_SERVICE_NAME") or os.getenv("CODE_ENGINE_APP_NAME", "payments-api")
+GCLOUD_PROJECT = os.getenv("GCLOUD_PROJECT", "")
+GCLOUD_REGION = os.getenv("GCLOUD_REGION", "")
 
 
 async def apply_fix_and_deploy(
     incident_id: str,
-    fixed_code: str
+    fixed_code: str,
+    target_file: str,
+    regression_test_content: str = "",
+    regression_test_file: str = "",
 ) -> AsyncGenerator[str, None]:
     """
     Orchestrates the deployment of an approved fix
     
     Calls the deploy_fix.sh bash script which:
-    1. Copies fixed file to repo
-    2. Runs test suite
-    3. Builds Docker container
-    4. Pushes to IBM Container Registry
-    5. Deploys to Code Engine
-    6. Polls until ready
+    1. Copies the fixed file into the repo
+    2. Optionally writes the generated regression test
+    3. Runs the demo-service test suite
+    4. Deploys the demo service to Cloud Run with gcloud
     
     Args:
         incident_id: Unique incident identifier
         fixed_code: Bob's fixed source code
+        target_file: Repo-relative path to replace with fixed_code
+        regression_test_content: Optional regression test file contents
+        regression_test_file: Optional repo-relative regression test path
     
     Yields audit log entries as SSE events for real-time monitoring
     """
@@ -55,15 +56,31 @@ async def apply_fix_and_deploy(
         yield _log_event(f"ERROR: Deployment script not found: {script_path}")
         yield _completion_event(incident_id, "failed", "Deployment script missing")
         return
+
+    if not fixed_code.strip() or not target_file.strip():
+        yield _log_event("ERROR: Missing fixed code or target file for deployment")
+        yield _completion_event(incident_id, "failed", "Structured fix payload missing")
+        return
     
     # Create temporary file for fixed code
-    with tempfile.NamedTemporaryFile(mode='w', suffix='.js', delete=False) as tmp:
+    fixed_suffix = os.path.splitext(target_file)[1] or '.txt'
+    with tempfile.NamedTemporaryFile(mode='w', suffix=fixed_suffix, delete=False) as tmp:
         tmp.write(fixed_code)
         fixed_file_path = tmp.name
+
+    regression_test_path = ""
+    if regression_test_content.strip() and regression_test_file.strip():
+        test_suffix = os.path.splitext(regression_test_file)[1] or '.txt'
+        with tempfile.NamedTemporaryFile(mode='w', suffix=test_suffix, delete=False) as tmp:
+            tmp.write(regression_test_content)
+            regression_test_path = tmp.name
     
     try:
         yield _log_event(f"Starting deployment for incident {incident_id}...")
         yield _log_event(f"Fixed code written to: {fixed_file_path}")
+        yield _log_event(f"Target file: {target_file}")
+        if regression_test_path:
+            yield _log_event(f"Regression test prepared for: {regression_test_file}")
         
         # Generate commit message with Granite
         yield _log_event("Generating commit message with IBM Granite...")
@@ -73,14 +90,11 @@ async def apply_fix_and_deploy(
         
         # Prepare environment variables for the script
         env = os.environ.copy()
-        if ICR_NAMESPACE:
-            env["ICR_NAMESPACE"] = ICR_NAMESPACE
-        if CODE_ENGINE_APP_NAME:
-            env["CODE_ENGINE_APP_NAME"] = CODE_ENGINE_APP_NAME
-        if IBM_CLOUD_API_KEY:
-            env["IBMCLOUD_API_KEY"] = IBM_CLOUD_API_KEY
-        if IBM_CLOUD_REGION:
-            env["IBMCLOUD_REGION"] = IBM_CLOUD_REGION
+        env["CLOUD_RUN_SERVICE_NAME"] = CLOUD_RUN_SERVICE_NAME
+        if GCLOUD_PROJECT:
+            env["GCLOUD_PROJECT"] = GCLOUD_PROJECT
+        if GCLOUD_REGION:
+            env["GCLOUD_REGION"] = GCLOUD_REGION
         
         # Execute deployment script
         process = await asyncio.create_subprocess_exec(
@@ -88,6 +102,9 @@ async def apply_fix_and_deploy(
             script_path,
             incident_id,
             fixed_file_path,
+            target_file,
+            regression_test_path,
+            regression_test_file,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.STDOUT,
             env=env
@@ -153,6 +170,11 @@ async def apply_fix_and_deploy(
             os.unlink(fixed_file_path)
         except:
             pass
+        if regression_test_path:
+            try:
+                os.unlink(regression_test_path)
+            except:
+                pass
 
 
 def _log_event(message: str) -> str:

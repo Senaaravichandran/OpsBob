@@ -24,6 +24,7 @@ function Dashboard() {
   const [pipelineComplete, setPipelineComplete] = useState(false)
   const [pipelineResults, setPipelineResults] = useState(null)
   const [analysisComplete, setAnalysisComplete] = useState(false)
+  const [analysisError, setAnalysisError] = useState(null)
   const [deploying, setDeploying] = useState(false)
   const [resolved, setResolved] = useState(false)
   const [deployLogs, setDeployLogs] = useState([])
@@ -61,6 +62,7 @@ function Dashboard() {
     setPipelineComplete(false)
     setPipelineResults(null)
     setAnalysisComplete(false)
+    setAnalysisError(null)
     setDeploying(false)
     setResolved(false)
     setDeployLogs([])
@@ -110,7 +112,9 @@ function Dashboard() {
           setPipelineComplete(true)
           setPipelineResults({ agents: agentResults, ...data })
           setAnalysisComplete(true)
+          setAnalysisError(null)
           setCurrentPhase(null)
+          eventSource.close()
         }
 
         // Complete (no pipeline) — analysis only
@@ -121,6 +125,11 @@ function Dashboard() {
         // Error
         if (data.phase === 'error') {
           setCurrentPhase(null)
+          setAnalysisError(data.content || 'Analysis failed')
+          setAnalysisComplete(false)
+          setPipelineComplete(false)
+          setPipelineResults(null)
+          eventSource.close()
           console.error('Analysis error:', data.content)
         }
       } catch (e) {
@@ -130,12 +139,12 @@ function Dashboard() {
 
     eventSource.onerror = () => {
       eventSource.close()
-      if (!analysisComplete) {
-        setAnalysisComplete(true)
+      if (!analysisComplete && !analysisError) {
+        setAnalysisError('Analysis stream disconnected unexpectedly')
         setCurrentPhase(null)
       }
     }
-  }, [incidents])
+  }, [analysisComplete, analysisError, agentResults, incidents])
 
   // Approve and deploy
   const handleApprove = useCallback(async () => {
@@ -265,7 +274,7 @@ function Dashboard() {
               </div>
             ) : (
               <>
-                <DiagnosisCard phases={phases} currentPhase={currentPhase} />
+                <DiagnosisCard phases={phases} currentPhase={currentPhase} analysisError={analysisError} />
                 {riskAssessment && <RiskAssessmentCard assessment={riskAssessment} />}
                 {Object.keys(agentResults).length > 0 && (
                   <AgentPipelineStatus
@@ -282,6 +291,7 @@ function Dashboard() {
         <section className="dashboard__panel dashboard__panel--right">
           <FixActions
             analysisComplete={analysisComplete}
+            analysisError={analysisError}
             pipelineResults={pipelineResults}
             onApprove={handleApprove}
             onEscalate={handleEscalate}

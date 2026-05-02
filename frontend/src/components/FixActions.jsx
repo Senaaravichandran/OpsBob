@@ -3,10 +3,34 @@ import { Button, Tag } from '@carbon/react'
 import { Checkmark, WarningAlt, UserAdmin } from '@carbon/icons-react'
 import './FixActions.css'
 
-function FixActions({ analysisComplete, pipelineResults, onApprove, onEscalate, deploying }) {
+function FixActions({ analysisComplete, analysisError, pipelineResults, onApprove, onEscalate, deploying }) {
   const routing = pipelineResults?.agents?.approval_router
   const recommendation = routing?.recommendation || 'review'
-  const blocked = recommendation === 'escalate'
+  const blocked = recommendation === 'escalate' || !pipelineResults || Boolean(analysisError)
+
+  if (analysisError) {
+    return (
+      <div className="fix-actions fix-actions--disabled">
+        <div className="fix-actions__header">
+          <span className="fix-actions__title">RESPONSE ACTIONS</span>
+          <Tag type="red" size="sm">FAILED</Tag>
+        </div>
+        <p className="fix-actions__waiting">Analysis failed: {analysisError}</p>
+        <div className="fix-actions__buttons">
+          <Button
+            kind="danger--tertiary"
+            size="md"
+            className="fix-actions__escalate"
+            onClick={onEscalate}
+            disabled={deploying}
+            renderIcon={WarningAlt}
+          >
+            ESCALATE TO HUMAN
+          </Button>
+        </div>
+      </div>
+    )
+  }
 
   if (!analysisComplete) {
     return (

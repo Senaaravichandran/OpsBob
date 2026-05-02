@@ -15,12 +15,13 @@ from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
 from dotenv import load_dotenv
 
-from bob_client import call_bob_orchestrator
+from bob_client import call_bob_orchestrator, is_bob_shell_available
 from bobshell import apply_fix_and_deploy
 from mcp_client import get_mcp_client
 from watsonx_client import generate_with_granite
 from orchestrate_agents import (
     run_agent_pipeline, run_post_incident,
+    run_static_analysis, run_tests, route_approval,
     get_incident_history, get_similar_incidents
 )
 from health_monitor import get_all_service_health
@@ -28,7 +29,6 @@ from incident_intelligence import build_context_enrichment, get_stats as get_mem
 
 load_dotenv()
 
-BOB_API_KEY = os.getenv("BOB_API_KEY")
 SOURCE_FILES_PATH = os.getenv("SOURCE_FILES_PATH", "demo-service")
 DEMO_SERVICE_URL = os.getenv("DEMO_SERVICE_URL", "http://localhost:3001")
 
@@ -67,6 +67,29 @@ class OrchestrateDecision(BaseModel):
     approver: str
     reason: str
 
+class StaticAnalysisRequest(BaseModel):
+    incident_id: str
+    code_diff: str
+    plan_text: Optional[str] = ""
+
+class TestRunnerRequest(BaseModel):
+    incident_id: str
+    test_command: Optional[str] = "npm test"
+    working_dir: Optional[str] = None
+
+class ApprovalRoutingRequest(BaseModel):
+    incident_id: str
+    risk_score: Optional[str] = None
+    static_verdict: Optional[str] = None
+    test_results: Optional[Dict[str, Any]] = None
+    risk_assessment: Optional[Dict[str, Any]] = None
+    static_result: Optional[Dict[str, Any]] = None
+
+class PostIncidentRequest(BaseModel):
+    incident_id: str
+    timeline: Optional[str] = None
+    resolution_data: Optional[Dict[str, Any]] = None
+
 
 # ── Startup ──────────────────────────────────────────────────────
 @app.on_event("startup")
@@ -74,7 +97,7 @@ async def startup_event():
     print("=" * 60)
     print("  OpsBob Backend v2.0 — Production Intelligence Platform")
     print("=" * 60)
-    print(f"  Bob API: {'configured' if BOB_API_KEY else 'NOT SET'}")
+    print(f"  Bob shell: {'available' if is_bob_shell_available() else 'NOT FOUND'}")
     print(f"  Source path: {SOURCE_FILES_PATH}")
     print(f"  Demo service: {DEMO_SERVICE_URL}")
     memory_stats = get_memory_stats()
@@ -112,11 +135,15 @@ async def receive_webhook(incident: IncidentWebhook):
         try:
             mcp = get_mcp_client()
             st_result = mcp.get_stack_traces(incident_id)
+            should_fallback = st_result.get("error", False)
             if not st_result.get("error"):
                 stack_traces = st_result.get("stack_trace", "")
             m_result = mcp.get_service_metrics(service, "10m")
+            should_fallback = should_fallback or m_result.get("error", False)
             if not m_result.get("error"):
                 mem_growth_mb = m_result.get("current_memory_mb", 0) - m_result.get("baseline_memory_mb", 0)
+            if should_fallback or not stack_traces:
+                raise RuntimeError("MCP enrichment unavailable; using demo-service fallback")
         except Exception as mcp_err:
             print(f"  MCP fallback: {mcp_err}")
             # Fallback to demo service /debug/traces and /metrics
@@ -212,10 +239,17 @@ async def stream_analysis(incidentId: str):
         try:
             print(f"Starting analysis for {incidentId}")
             incident["status"] = "analyzing"
+            incident.pop("analysis_error", None)
             context = incident["context"]
 
             async for event in call_bob_orchestrator(context):
                 event_data = json.loads(event.replace("data: ", "").strip())
+
+                if event_data.get("phase") == "error":
+                    incident["status"] = "analysis_failed"
+                    incident["analysis_error"] = event_data.get("content", "Analysis failed")
+                    yield event
+                    return
 
                 if event_data.get("phase") == "plan" and event_data.get("done"):
                     incident["plan_response"] = event_data.get("content", "")
@@ -223,6 +257,10 @@ async def stream_analysis(incidentId: str):
 
                 if event_data.get("phase") == "code" and event_data.get("done"):
                     incident["bob_response"] = event_data.get("content", "")
+                    incident["fixed_code"] = event_data.get("fixed_code", "")
+                    incident["fix_target_file"] = event_data.get("target_file", "")
+                    incident["regression_test_file"] = event_data.get("regression_test_file", "")
+                    incident["regression_test_content"] = event_data.get("regression_test_content", "")
 
                 yield event
 
@@ -260,11 +298,16 @@ async def stream_analysis(incidentId: str):
                     "done": True
                 }
                 yield f"data: {json.dumps(complete_event)}\n\n"
-
-            incident["status"] = "analyzed"
+                incident["status"] = "analyzed"
+            else:
+                incident["status"] = "analysis_failed"
+                incident["analysis_error"] = "Analysis did not produce a plan and code diff"
+                yield f"data: {json.dumps({'phase': 'error', 'content': incident['analysis_error'], 'done': True})}\n\n"
 
         except Exception as e:
             print(f"Stream error: {e}")
+            incident["status"] = "analysis_failed"
+            incident["analysis_error"] = str(e)
             yield f"data: {json.dumps({'phase': 'error', 'content': str(e), 'done': True})}\n\n"
 
     return StreamingResponse(event_generator(), media_type="text/event-stream",
@@ -277,13 +320,21 @@ async def approve_fix(incidentId: str, approval: ApprovalRequest):
     if incidentId not in active_incidents:
         raise HTTPException(status_code=404, detail="Incident not found")
 
+    incident = active_incidents[incidentId]
+
+    if incident.get("analysis_error"):
+        raise HTTPException(status_code=400, detail="Cannot approve an incident with a failed analysis")
+
+    if not incident.get("pipeline_results"):
+        raise HTTPException(status_code=400, detail="Cannot approve before the verification pipeline completes")
+
     if approval.approved:
         print(f"FIX APPROVED for {incidentId}")
-        active_incidents[incidentId]["status"] = "deploying"
-        active_incidents[incidentId]["approved_at"] = datetime.now().isoformat()
+        incident["status"] = "deploying"
+        incident["approved_at"] = datetime.now().isoformat()
         return {"status": "deploying", "incidentId": incidentId}
     else:
-        active_incidents[incidentId]["status"] = "rejected"
+        incident["status"] = "rejected"
         return {"status": "rejected", "incidentId": incidentId}
 
 
@@ -337,6 +388,63 @@ async def prepare_orchestrate(incidentId: str):
         raise HTTPException(status_code=500, detail=str(e))
 
 
+# ── POST /orchestrate/static-analysis ───────────────────────────
+@app.post("/orchestrate/static-analysis")
+async def orchestrate_static_analysis(request: StaticAnalysisRequest):
+    """Tool endpoint for watsonx Orchestrate StaticAnalysisAgent."""
+    return await run_static_analysis(
+        request.incident_id,
+        request.code_diff,
+        request.plan_text or ""
+    )
+
+
+# ── POST /orchestrate/run-tests ─────────────────────────────────
+@app.post("/orchestrate/run-tests")
+async def orchestrate_run_tests(request: TestRunnerRequest):
+    """Tool endpoint for watsonx Orchestrate TestRunnerAgent."""
+    return await run_tests(request.incident_id, working_dir=request.working_dir)
+
+
+# ── POST /orchestrate/route-approval ────────────────────────────
+@app.post("/orchestrate/route-approval")
+async def orchestrate_route_approval(request: ApprovalRoutingRequest):
+    """Tool endpoint for watsonx Orchestrate ApprovalRouterAgent."""
+    risk_assessment = request.risk_assessment or {
+        "confidence": "medium",
+        "risk_level": request.risk_score or "medium"
+    }
+    static_result = request.static_result or {
+        "verdict": request.static_verdict or "PASS"
+    }
+    test_result = request.test_results or {
+        "verdict": "PASS",
+        "failed": 0
+    }
+
+    return await route_approval(
+        request.incident_id,
+        risk_assessment,
+        static_result,
+        test_result
+    )
+
+
+# ── POST /orchestrate/post-incident ─────────────────────────────
+@app.post("/orchestrate/post-incident")
+async def orchestrate_post_incident(request: PostIncidentRequest):
+    """Tool endpoint for watsonx Orchestrate PostIncidentReportAgent."""
+    incident_data = dict(request.resolution_data or {})
+    if request.timeline and "timeline" not in incident_data:
+        incident_data["timeline"] = request.timeline
+
+    result = await run_post_incident(request.incident_id, incident_data)
+    return {
+        **result,
+        "runbook_update": result.get("runbook_entry", "")
+    }
+
+
 # ── GET /deploy-stream/{incidentId} ─────────────────────────────
 @app.get("/deploy-stream/{incidentId}")
 async def stream_deployment(incidentId: str):
@@ -348,8 +456,19 @@ async def stream_deployment(incidentId: str):
 
     async def deployment_generator():
         try:
-            fix_diff = incident.get("fixDiff", "")
-            async for event in apply_fix_and_deploy(incidentId, fix_diff):
+            fixed_code = incident.get("fixed_code", "")
+            target_file = incident.get("fix_target_file", "")
+
+            if not fixed_code or not target_file:
+                raise ValueError("No structured fix payload available for deployment")
+
+            async for event in apply_fix_and_deploy(
+                incidentId,
+                fixed_code,
+                target_file=target_file,
+                regression_test_content=incident.get("regression_test_content", ""),
+                regression_test_file=incident.get("regression_test_file", ""),
+            ):
                 yield event
 
             incident["status"] = "resolved"

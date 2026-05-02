@@ -3,7 +3,7 @@ description: Executes regression tests on fixed code to verify correctness
 instructions: |
   You execute the test suite for the affected service. Run npm test and report
   the pass/fail counts. If any test fails, the deployment should be blocked.
-model: ibm/granite-3-8b-instruct
+model: ibm/granite-4-h-small
 tools:
   - name: run_regression_tests
     type: api
