@@ -43,6 +43,26 @@ def _build_watsonx_scope() -> Dict[str, str]:
     return {}
 
 
+def _parse_generated_json(text: str) -> Dict[str, Any]:
+    cleaned = text.strip()
+    if cleaned.startswith("```json"):
+        cleaned = cleaned[7:]
+    if cleaned.startswith("```"):
+        cleaned = cleaned[3:]
+    if cleaned.endswith("```"):
+        cleaned = cleaned[:-3]
+    cleaned = cleaned.strip()
+
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start != -1 and end != -1 and end > start:
+            return json.loads(cleaned[start:end + 1])
+        raise
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Agent 1: StaticAnalysisAgent
 # ═══════════════════════════════════════════════════════════════════════════
@@ -123,18 +143,8 @@ Return ONLY valid JSON with these fields:
                 result = await response.json()
                 generated = result.get("results", [{}])[0].get("generated_text", "")
 
-                # Parse JSON from response
-                cleaned = generated.strip()
-                if cleaned.startswith("```json"):
-                    cleaned = cleaned[7:]
-                if cleaned.startswith("```"):
-                    cleaned = cleaned[3:]
-                if cleaned.endswith("```"):
-                    cleaned = cleaned[:-3]
-                cleaned = cleaned.strip()
-
                 try:
-                    parsed = json.loads(cleaned)
+                    parsed = _parse_generated_json(generated)
                     duration = int((datetime.now() - start).total_seconds() * 1000)
                     return {
                         "verdict": parsed.get("verdict", "PASS"),
@@ -454,18 +464,8 @@ Return ONLY valid JSON with these fields:
                 result = await response.json()
                 generated = result.get("results", [{}])[0].get("generated_text", "")
 
-                # Parse
-                cleaned = generated.strip()
-                if cleaned.startswith("```json"):
-                    cleaned = cleaned[7:]
-                if cleaned.startswith("```"):
-                    cleaned = cleaned[3:]
-                if cleaned.endswith("```"):
-                    cleaned = cleaned[:-3]
-                cleaned = cleaned.strip()
-
                 try:
-                    parsed = json.loads(cleaned)
+                    parsed = _parse_generated_json(generated)
                     duration = int((datetime.now() - start).total_seconds() * 1000)
 
                     report = {

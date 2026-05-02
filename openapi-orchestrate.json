@@ -6,8 +6,8 @@
              },
     "servers":  [
                     {
-                        "url":  "https://opsbob-backend-4i6z7vcvfa-el.a.run.app",
-                        "description":  "OpsBob Cloud Run backend"
+                        "url":  "https://opsbob-backend-979788564023.us-central1.run.app",
+                        "description":  "OpsBob Cloud Run backend (us-central1)"
                     }
                 ],
     "paths":  {

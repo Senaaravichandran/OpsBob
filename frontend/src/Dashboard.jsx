@@ -7,12 +7,32 @@ import chatbotAnimation from '../public/Chatbot.json'
 import IncidentFeed from './components/IncidentFeed'
 import DiagnosisCard from './components/DiagnosisCard'
 import RiskAssessmentCard from './components/RiskAssessmentCard'
+import OrchestrationFlowCard from './components/OrchestrationFlowCard'
 import AgentPipelineStatus from './components/AgentPipelineStatus'
 import FixActions from './components/FixActions'
 import AuditTrail from './components/AuditTrail'
 import MemoryTelemetry from './components/MemoryTelemetry'
 import SystemHealthBar from './components/SystemHealthBar'
 import './Dashboard.css'
+
+const AGENT_LABELS = {
+  static_analysis: 'Static Analysis',
+  test_runner: 'Test Runner',
+  approval_router: 'Approval Router'
+}
+
+function summarizeAgentResult(result) {
+  if (!result) return ''
+  if (Array.isArray(result.findings) && result.findings.length > 0) {
+    return result.findings.slice(0, 2).join(' ')
+  }
+  if (result.routing_reason) return result.routing_reason
+  if (typeof result.report === 'string') return result.report
+  if (typeof result.error === 'string') return result.error
+  if (typeof result.summary === 'string') return result.summary
+  if (typeof result.stdout === 'string') return result.stdout
+  return ''
+}
 
 function Dashboard() {
   const [incidents, setIncidents] = useState({})
@@ -25,6 +45,9 @@ function Dashboard() {
   const [pipelineResults, setPipelineResults] = useState(null)
   const [analysisComplete, setAnalysisComplete] = useState(false)
   const [analysisError, setAnalysisError] = useState(null)
+  const [orchestrateDecision, setOrchestrateDecision] = useState(null)
+  const [orchestrateStatus, setOrchestrateStatus] = useState(null)
+  const [executionFeed, setExecutionFeed] = useState([])
   const [deploying, setDeploying] = useState(false)
   const [resolved, setResolved] = useState(false)
   const [deployLogs, setDeployLogs] = useState([])
@@ -32,6 +55,19 @@ function Dashboard() {
   const [memAfter, setMemAfter] = useState(null)
   const [mttr, setMttr] = useState(null)
   const [systemStatus, setSystemStatus] = useState('nominal')
+
+  const appendExecutionEvent = useCallback((entry) => {
+    if (!entry?.message && !entry?.detail) return
+
+    setExecutionFeed(prev => ([
+      ...prev,
+      {
+        id: `${Date.now()}-${Math.random().toString(16).slice(2)}`,
+        timestamp: new Date().toISOString(),
+        ...entry
+      }
+    ].slice(-18)))
+  }, [])
 
   // Poll for incidents
   useEffect(() => {
@@ -63,6 +99,9 @@ function Dashboard() {
     setPipelineResults(null)
     setAnalysisComplete(false)
     setAnalysisError(null)
+    setOrchestrateDecision(null)
+    setOrchestrateStatus(null)
+    setExecutionFeed([])
     setDeploying(false)
     setResolved(false)
     setDeployLogs([])
@@ -101,25 +140,83 @@ function Dashboard() {
 
         // Agent pipeline events
         if (data.phase === 'agent') {
+          const nextResult = data.result || { status: data.status, verdict: data.status }
           setAgentResults(prev => ({
             ...prev,
-            [data.agent]: data.result || { status: data.status, verdict: data.status }
+            [data.agent]: nextResult
           }))
+          appendExecutionEvent({
+            actor: AGENT_LABELS[data.agent] || data.agent,
+            status: data.status,
+            message: data.message || 'Agent update received',
+            detail: summarizeAgentResult(data.result)
+          })
         }
 
         // Pipeline complete
         if (data.phase === 'pipeline_complete') {
           setPipelineComplete(true)
-          setPipelineResults({ agents: agentResults, ...data })
+          setPipelineResults(data)
           setAnalysisComplete(true)
           setAnalysisError(null)
           setCurrentPhase(null)
+          appendExecutionEvent({
+            actor: 'Verification Pipeline',
+            status: data.verdict,
+            message: data.routing_reason
+              ? `Pipeline verdict: ${String(data.verdict || 'review').toUpperCase()} — ${data.routing_reason}`
+              : `Pipeline verdict: ${String(data.verdict || 'review').toUpperCase()}`
+          })
+          // Keep stream open — Orchestrate decision follows
+        }
+
+        if (data.phase === 'orchestrate_status') {
+          setOrchestrateStatus(data.status)
+          appendExecutionEvent({
+            actor: 'Orchestrate Commander',
+            status: data.status,
+            message: data.message || 'Commander review in progress'
+          })
+        }
+
+        // Orchestrate commander decision
+        if (data.phase === 'orchestrate_decision') {
+          setOrchestrateDecision(data)
+          setOrchestrateStatus(data.decision)
+          appendExecutionEvent({
+            actor: 'Orchestrate Commander',
+            status: data.decision,
+            message: !data.orchestrate_used && data.error
+              ? `Fallback decision: ${String(data.decision || 'review').toUpperCase()} — ${data.error}`
+              : `Decision: ${String(data.decision || 'review').toUpperCase()}`
+          })
+          if (!data.orchestrate_used && data.error) {
+            console.warn('[Orchestrate] fallback:', data.error)
+          }
+        }
+
+        // Orchestrate auto-approved — close stream and start deploy immediately
+        if (data.phase === 'auto_deploy') {
+          appendExecutionEvent({
+            actor: 'Orchestrate Commander',
+            status: 'complete',
+            message: 'Auto-deploy triggered for production rollout'
+          })
           eventSource.close()
+          handleAutoDeployStream(data.incidentId)
         }
 
         // Complete (no pipeline) — analysis only
         if (data.phase === 'complete' || (data.done && data.phase === 'code' && !data.agent)) {
           // Will wait for pipeline events
+        }
+
+        // Close stream after orchestrate decision when not auto-deploying
+        if (data.phase === 'orchestrate_decision' && data.done) {
+          const dec = data.decision
+          if (dec !== 'approve') {
+            eventSource.close()
+          }
         }
 
         // Error
@@ -144,7 +241,50 @@ function Dashboard() {
         setCurrentPhase(null)
       }
     }
-  }, [analysisComplete, analysisError, agentResults, incidents])
+  }, [analysisComplete, analysisError, appendExecutionEvent, incidents]) // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Called automatically when Orchestrate commander approves
+  const handleAutoDeployStream = useCallback(async (incidentId) => {
+    setDeploying(true)
+    setDeployLogs(prev => [...prev, {
+      type: 'info',
+      message: '[Orchestrate Commander] Auto-approved — deploying to production',
+      timestamp: new Date().toISOString()
+    }])
+
+    const eventSource = new EventSource(`/deploy-stream/${incidentId}`)
+    const startTime = Date.now()
+
+    eventSource.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        if (data.type === 'log') setDeployLogs(prev => [...prev, data])
+        if (data.type === 'completion') {
+          const elapsed = Math.round((Date.now() - startTime) / 1000)
+          const mins = Math.floor(elapsed / 60)
+          const secs = elapsed % 60
+          setMttr(`${mins}m ${secs}s`)
+          setMemAfter(data.memoryAfter ? parseInt(data.memoryAfter) : 128)
+          setResolved(true)
+          setDeploying(false)
+          eventSource.close()
+        }
+        if (data.type === 'agent') {
+          setDeployLogs(prev => [...prev, {
+            type: 'agent',
+            message: `[${data.agent}] ${data.status}`,
+            timestamp: new Date().toISOString()
+          }])
+        }
+        if (data.type === 'error') {
+          setDeployLogs(prev => [...prev, { ...data, type: 'error' }])
+          setDeploying(false)
+          eventSource.close()
+        }
+      } catch (e) { console.error('Auto-deploy parse error:', e) }
+    }
+    eventSource.onerror = () => { eventSource.close(); setDeploying(false) }
+  }, [])
 
   // Approve and deploy
   const handleApprove = useCallback(async () => {
@@ -276,6 +416,16 @@ function Dashboard() {
               <>
                 <DiagnosisCard phases={phases} currentPhase={currentPhase} analysisError={analysisError} />
                 {riskAssessment && <RiskAssessmentCard assessment={riskAssessment} />}
+                <OrchestrationFlowCard
+                  phases={phases}
+                  currentPhase={currentPhase}
+                  riskAssessment={riskAssessment}
+                  executionFeed={executionFeed}
+                  pipelineComplete={pipelineComplete}
+                  analysisError={analysisError}
+                  orchestrateStatus={orchestrateStatus}
+                  orchestrateDecision={orchestrateDecision}
+                />
                 {Object.keys(agentResults).length > 0 && (
                   <AgentPipelineStatus
                     agentResults={agentResults}
@@ -293,6 +443,7 @@ function Dashboard() {
             analysisComplete={analysisComplete}
             analysisError={analysisError}
             pipelineResults={pipelineResults}
+            orchestrateDecision={orchestrateDecision}
             onApprove={handleApprove}
             onEscalate={handleEscalate}
             deploying={deploying}

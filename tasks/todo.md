@@ -32,3 +32,19 @@
 - [x] Switch deployment from IBM Cloud Code Engine to gcloud Cloud Run
 - [x] Update stale health/startup/config surfaces that still assume Bob API or IBM Cloud deployment
 - [x] Validate the migrated flow with focused compile/build/runtime checks
+
+## Production Bob CLI Fix
+
+- [ ] Vendor the proven local Bob bundle into the backend build context
+- [ ] Resolve Bob execution through the local bundle when PATH does not provide `bob`
+- [ ] Update runtime health checks and container image requirements for the bundled Bob path
+- [ ] Validate the bundled fallback locally without relying on the globally installed Bob wrapper
+- [ ] Redeploy the backend and re-run the frontend browser flow against production
+
+## Local Live Orchestration UI
+
+- [ ] Wire pipeline progress callbacks into the existing `/stream/{incidentId}` SSE flow
+- [ ] Add a center-panel live orchestration card for `Brainstorm`, `Plan`, and `Execute`
+- [ ] Preserve existing dashboard actions while showing live agent outputs inline
+- [ ] Run the backend, demo service, and frontend locally and verify the full UI flow
+- [ ] Capture any blockers found during local verification

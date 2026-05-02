@@ -1,12 +1,17 @@
 import React from 'react'
 import { Button, Tag } from '@carbon/react'
-import { Checkmark, WarningAlt, UserAdmin } from '@carbon/icons-react'
+import { Checkmark, WarningAlt, UserAdmin, Bot } from '@carbon/icons-react'
 import './FixActions.css'
 
-function FixActions({ analysisComplete, analysisError, pipelineResults, onApprove, onEscalate, deploying }) {
+function FixActions({ analysisComplete, analysisError, pipelineResults, orchestrateDecision, onApprove, onEscalate, deploying }) {
   const routing = pipelineResults?.agents?.approval_router
   const recommendation = routing?.recommendation || 'review'
   const blocked = recommendation === 'escalate' || !pipelineResults || Boolean(analysisError)
+
+  // Orchestrate commander state
+  const orcDecision = orchestrateDecision?.decision
+  const orcUsed = orchestrateDecision?.orchestrate_used
+  const orcPending = analysisComplete && pipelineResults && !orchestrateDecision
 
   if (analysisError) {
     return (
@@ -60,8 +65,29 @@ function FixActions({ analysisComplete, analysisError, pipelineResults, onApprov
         </p>
       )}
 
+      {/* Orchestrate commander status */}
+      {orcPending && (
+        <p className="fix-actions__reason fix-actions__reason--orch">
+          <Bot size={14} style={{ marginRight: 4, verticalAlign: 'middle' }} />
+          Orchestrate Commander evaluating…
+        </p>
+      )}
+      {orchestrateDecision && (
+        <div className="fix-actions__orch-banner">
+          <Bot size={14} />
+          <span>
+            Orchestrate Commander:{' '}
+            <strong>{orcDecision?.toUpperCase()}</strong>
+            {!orcUsed && orchestrateDecision.error && (
+              <span style={{ opacity: 0.6 }}> (fallback — {orchestrateDecision.error})</span>
+            )}
+          </span>
+        </div>
+      )}
+
       <div className="fix-actions__buttons">
-        {!blocked && (
+        {/* Hide manual approve if Orchestrate already auto-deploying */}
+        {!blocked && orcDecision !== 'approve' && (
           <Button
             kind="primary"
             size="md"
@@ -72,6 +98,12 @@ function FixActions({ analysisComplete, analysisError, pipelineResults, onApprov
           >
             {deploying ? 'DEPLOYING...' : 'APPROVE & DEPLOY FIX'}
           </Button>
+        )}
+        {orcDecision === 'approve' && (
+          <p className="fix-actions__reason" style={{ color: 'var(--cds-support-success, #42be65)' }}>
+            <Checkmark size={14} style={{ marginRight: 4, verticalAlign: 'middle' }} />
+            {deploying ? 'Auto-deploying to production…' : 'Deployed by Orchestrate Commander'}
+          </p>
         )}
         <Button
           kind="danger--tertiary"

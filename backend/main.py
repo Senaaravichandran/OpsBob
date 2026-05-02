@@ -24,6 +24,9 @@ from orchestrate_agents import (
     run_static_analysis, run_tests, route_approval,
     get_incident_history, get_similar_incidents
 )
+from orchestrate_client import (
+    run_pre_incident_pipeline, run_post_incident_pipeline, is_orchestrate_configured
+)
 from health_monitor import get_all_service_health
 from incident_intelligence import build_context_enrichment, get_stats as get_memory_stats
 
@@ -236,6 +239,9 @@ async def stream_analysis(incidentId: str):
         raise HTTPException(status_code=400, detail="Context not assembled")
 
     async def event_generator():
+        def encode_sse(payload):
+            return f"data: {json.dumps(payload)}\n\n"
+
         try:
             print(f"Starting analysis for {incidentId}")
             incident["status"] = "analyzing"
@@ -270,45 +276,85 @@ async def stream_analysis(incidentId: str):
             if incident.get("bob_response") and incident.get("plan_response"):
                 print(f"Starting 4-agent pipeline for {incidentId}")
 
-                async def emit_agent_event(evt):
-                    pass  # Events stored in pipeline_results
+                pipeline_events = asyncio.Queue()
 
-                pipeline = await run_agent_pipeline(incidentId, incident)
+                async def emit_agent_event(evt):
+                    await pipeline_events.put(evt)
+
+                pipeline_task = asyncio.create_task(
+                    run_agent_pipeline(incidentId, incident, event_callback=emit_agent_event)
+                )
+
+                while True:
+                    if pipeline_task.done() and pipeline_events.empty():
+                        break
+
+                    try:
+                        pipeline_event = await asyncio.wait_for(pipeline_events.get(), timeout=0.2)
+                    except asyncio.TimeoutError:
+                        continue
+
+                    if pipeline_event.get("phase") == "agent_pipeline_complete":
+                        pipeline_result = pipeline_event.get("result", {})
+                        yield encode_sse({
+                            "phase": "pipeline_complete",
+                            "agents": pipeline_result.get("agents", {}),
+                            "verdict": pipeline_result.get("pipeline_verdict", "review"),
+                            "routing_reason": pipeline_result.get("routing_reason", ""),
+                            "all_passed": pipeline_result.get("all_agents_passed", False),
+                            "done": True
+                        })
+                        continue
+
+                    yield encode_sse({
+                        **pipeline_event,
+                        "done": pipeline_event.get("status") != "running"
+                    })
+
+                pipeline = await pipeline_task
                 incident["pipeline_results"] = pipeline
                 incident["approval_routing"] = pipeline.get("agents", {}).get("approval_router", {})
+                incident["status"] = "analyzed"
 
-                # Emit pipeline results as SSE
-                for agent_name in ["static_analysis", "test_runner", "approval_router"]:
-                    agent_result = pipeline.get("agents", {}).get(agent_name, {})
-                    agent_event = {
-                        "phase": "agent",
-                        "agent": agent_name,
-                        "status": agent_result.get("verdict", agent_result.get("recommendation", "complete")),
-                        "result": agent_result,
-                        "done": True
-                    }
-                    yield f"data: {json.dumps(agent_event)}\n\n"
+                # ── Orchestrate commander: final decision ────────────────────
+                print(f"Calling Orchestrate commander for {incidentId}")
+                yield encode_sse({
+                    "phase": "orchestrate_status",
+                    "status": "running",
+                    "message": "Commander is reviewing verification outputs",
+                    "done": False
+                })
+                orc_result = await run_pre_incident_pipeline(incidentId, incident)
+                incident["orchestrate_result"] = orc_result
+                orc_decision = orc_result.get("decision", "review")
 
-                # Pipeline complete event
-                complete_event = {
-                    "phase": "pipeline_complete",
-                    "verdict": pipeline.get("pipeline_verdict", "review"),
-                    "routing_reason": pipeline.get("routing_reason", ""),
-                    "all_passed": pipeline.get("all_agents_passed", False),
+                orchestrate_event = {
+                    "phase": "orchestrate_decision",
+                    "decision": orc_decision,
+                    "session_id": orc_result.get("session_id"),
+                    "orchestrate_used": orc_result.get("orchestrate_used", False),
+                    "error": orc_result.get("error"),
                     "done": True
                 }
-                yield f"data: {json.dumps(complete_event)}\n\n"
-                incident["status"] = "analyzed"
+                yield encode_sse(orchestrate_event)
+
+                # Auto-deploy when commander approves — no human click required
+                if orc_decision == "approve":
+                    incident["status"] = "deploying"
+                    incident["approved_at"] = datetime.now().isoformat()
+                    incident["approver"] = "orchestrate_commander"
+                    print(f"[ORCHESTRATE] Auto-approving {incidentId} — triggering deploy")
+                    yield encode_sse({"phase": "auto_deploy", "incidentId": incidentId, "done": True})
             else:
                 incident["status"] = "analysis_failed"
                 incident["analysis_error"] = "Analysis did not produce a plan and code diff"
-                yield f"data: {json.dumps({'phase': 'error', 'content': incident['analysis_error'], 'done': True})}\n\n"
+                yield encode_sse({"phase": "error", "content": incident["analysis_error"], "done": True})
 
         except Exception as e:
             print(f"Stream error: {e}")
             incident["status"] = "analysis_failed"
             incident["analysis_error"] = str(e)
-            yield f"data: {json.dumps({'phase': 'error', 'content': str(e), 'done': True})}\n\n"
+            yield encode_sse({"phase": "error", "content": str(e), "done": True})
 
     return StreamingResponse(event_generator(), media_type="text/event-stream",
         headers={"Cache-Control": "no-cache", "Connection": "keep-alive", "X-Accel-Buffering": "no"})
@@ -474,9 +520,12 @@ async def stream_deployment(incidentId: str):
             incident["status"] = "resolved"
             incident["resolved_at"] = datetime.now().isoformat()
 
-            # Run PostIncidentReportAgent
+            # Run post-incident via Orchestrate commander (falls back to local agent)
             try:
-                report = await run_post_incident(incidentId, incident)
+                if is_orchestrate_configured():
+                    report = await run_post_incident_pipeline(incidentId, incident)
+                else:
+                    report = await run_post_incident(incidentId, incident)
                 incident["post_incident_report"] = report
                 yield f"data: {json.dumps({'type': 'agent', 'agent': 'post_incident', 'status': 'complete', 'result': report})}\n\n"
             except Exception as pe:

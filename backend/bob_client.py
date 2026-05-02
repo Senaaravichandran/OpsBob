@@ -1,5 +1,5 @@
 """
-Bob Shell Client - Uses the installed Bob CLI instead of direct HTTP calls.
+Bob Shell Client - Uses the installed Bob CLI or a vendored Bob bundle.
 Streams responses as Server-Sent Events for real-time dashboard updates.
 """
 
@@ -7,6 +7,7 @@ import asyncio
 import json
 import os
 import shutil
+import subprocess
 from pathlib import Path
 from typing import AsyncGenerator, Dict
 from dotenv import load_dotenv
@@ -16,16 +17,117 @@ load_dotenv()
 
 BOB_COMMAND = os.getenv("BOB_SHELL_COMMAND", "bob")
 BOB_TIMEOUT_SECONDS = int(os.getenv("BOB_SHELL_TIMEOUT_SECONDS", "300"))
-WORKSPACE_ROOT = Path(__file__).resolve().parent.parent
+BOB_APPROVAL_MODE = os.getenv("BOB_SHELL_APPROVAL_MODE", "yolo").strip()
+BOB_MODEL = os.getenv("BOB_SHELL_MODEL", "").strip()
+BOB_API_KEY = os.getenv("BOB_API_KEY", "").strip()
+BOB_API_URL = os.getenv("BOB_API_URL", "").strip()
+BACKEND_ROOT = Path(__file__).resolve().parent
+WORKSPACE_ROOT = BACKEND_ROOT.parent if (BACKEND_ROOT.parent / "demo-service").exists() else BACKEND_ROOT
+LOCAL_BOB_BUNDLE = BACKEND_ROOT / "vendor" / "bob.js"
 
 
-def _resolve_bob_command() -> str:
-    return shutil.which(BOB_COMMAND) or BOB_COMMAND
+def _is_truthy(raw_value: str, default: bool) -> bool:
+    value = raw_value.strip().lower()
+    if not value:
+        return default
+    return value not in {"0", "false", "no", "off"}
+
+
+def _normalize_bob_path(command_path: Path) -> list[str]:
+    if command_path.suffix.lower() == ".js":
+        node_executable = shutil.which("node")
+        if node_executable:
+            return [node_executable, str(command_path)]
+    # Windows .cmd/.bat scripts cannot be exec'd directly — they need cmd.exe /c
+    if command_path.suffix.lower() in (".cmd", ".bat"):
+        comspec = os.environ.get("COMSPEC", "cmd.exe")
+        return [comspec, "/c", str(command_path)]
+    return [str(command_path)]
+
+
+def _resolve_bob_command_parts() -> list[str]:
+    command_path = Path(BOB_COMMAND)
+    if command_path.is_file():
+        return _normalize_bob_path(command_path)
+
+    resolved = shutil.which(BOB_COMMAND)
+    if resolved:
+        resolved_path = Path(resolved)
+        # On Windows, `bob` resolves to bob.CMD which cannot reliably receive stdin
+        # when launched via asyncio.create_subprocess_exec.
+        # Fall back to the vendored bob.js with node for reliable piped execution.
+        if resolved_path.suffix.lower() in (".cmd", ".bat") and LOCAL_BOB_BUNDLE.exists():
+            node_executable = shutil.which("node")
+            if node_executable:
+                return [node_executable, str(LOCAL_BOB_BUNDLE)]
+        return _normalize_bob_path(resolved_path)
+
+    if LOCAL_BOB_BUNDLE.exists():
+        node_executable = shutil.which("node")
+        if node_executable:
+            return [node_executable, str(LOCAL_BOB_BUNDLE)]
+
+    return [BOB_COMMAND]
+
+
+def get_bob_command_parts(*extra_args: str) -> list[str]:
+    command = list(_resolve_bob_command_parts())
+
+    if _is_truthy(os.getenv("BOB_SHELL_ACCEPT_LICENSE", "true"), default=True):
+        command.append("--accept-license")
+    if _is_truthy(os.getenv("BOB_SHELL_TRUST", "true"), default=True):
+        command.append("--trust")
+    if BOB_APPROVAL_MODE:
+        command.extend(["--approval-mode", BOB_APPROVAL_MODE])
+    if BOB_MODEL:
+        command.extend(["--model", BOB_MODEL])
+    # Only force api-key auth in Cloud Run / CI environments.
+    # When running locally, Bob uses its stored credentials from `bob auth`.
+    force_api_auth = _is_truthy(os.getenv("BOB_FORCE_API_AUTH", "false"), default=False)
+    if BOB_API_KEY and force_api_auth:
+        command.extend(["--auth-method", "api-key"])
+
+    command.extend(extra_args)
+    return command
+
+
+def get_bob_subprocess_env() -> Dict[str, str]:
+    env = os.environ.copy()
+    force_api_auth = _is_truthy(os.getenv("BOB_FORCE_API_AUTH", "false"), default=False)
+    if BOB_API_KEY and force_api_auth:
+        # Cloud Run / CI: inject API credentials because stored `bob auth` is unavailable.
+        env["BOBSHELL_API_KEY"] = BOB_API_KEY
+        env["GEMINI_API_KEY"] = BOB_API_KEY
+        if BOB_API_URL:
+            env["CUSTOM_BASE_URL"] = BOB_API_URL
+    else:
+        # Local: Bob uses stored credentials from `bob auth` (BOBSHELL_API_KEY in shell env).
+        # Only strip CUSTOM_BASE_URL — if set it redirects Bob to the remote IBM API and
+        # causes it to hang. BOBSHELL_API_KEY must stay so Bob can authenticate.
+        env.pop("CUSTOM_BASE_URL", None)
+    env.setdefault("BOBSHELL_NO_RELAUNCH", "true")
+    env.setdefault("CI", "true")
+    return env
+
+
+def is_bob_api_key_configured() -> bool:
+    return bool(BOB_API_KEY or os.getenv("BOBSHELL_API_KEY", "").strip())
 
 
 def is_bob_shell_available() -> bool:
-    """Return True when the Bob CLI is available on PATH."""
-    return shutil.which(BOB_COMMAND) is not None
+    """Return True when the Bob CLI or bundled Bob runtime is available."""
+    command = _resolve_bob_command_parts()
+    executable = shutil.which(command[0])
+    if executable is None:
+        return False
+
+    if len(command) == 1:
+        return True
+
+    # When wrapped with cmd.exe /c <script>, command is ["cmd.exe", "/c", "<script>"]
+    # The real script to check is the last element.
+    script = command[-1]
+    return Path(script).exists()
 
 
 def _strip_code_fences(text: str) -> str:
@@ -146,6 +248,11 @@ async def call_bob_orchestrator(context: str) -> AsyncGenerator[str, None]:
 
     if not is_bob_shell_available():
         error_msg = f"Bob shell not found on PATH. Expected command: {BOB_COMMAND}"
+        yield f"data: {json.dumps({'phase': 'error', 'content': error_msg, 'done': True})}\n\n"
+        return
+
+    if not is_bob_api_key_configured():
+        error_msg = "Bob API key is not configured for the backend runtime. Set BOB_API_KEY in the deployment environment."
         yield f"data: {json.dumps({'phase': 'error', 'content': error_msg, 'done': True})}\n\n"
         return
 
@@ -274,32 +381,44 @@ Previous response:
 
 async def _call_bob_shell(prompt: str, chat_mode: str) -> str:
     """Run Bob shell in non-interactive mode and return its stdout."""
-    process = await asyncio.create_subprocess_exec(
-        _resolve_bob_command(),
-        "--chat-mode", chat_mode,
-        "--hide-intermediary-output",
-        "-o", "text",
-        cwd=str(WORKSPACE_ROOT),
-        stdin=asyncio.subprocess.PIPE,
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
+    _cmd = get_bob_command_parts("--chat-mode", chat_mode, "--hide-intermediary-output", "-o", "text")
+    _env = get_bob_subprocess_env()
+    print(f"[Bob/{chat_mode}] CMD: {_cmd}")
+    print(f"[Bob/{chat_mode}] CUSTOM_BASE_URL={_env.get('CUSTOM_BASE_URL', 'NOT SET')} BOBSHELL_API_KEY={'SET' if _env.get('BOBSHELL_API_KEY') else 'NOT SET'} CI={_env.get('CI')} CWD={WORKSPACE_ROOT}")
 
-    stdout, stderr = await asyncio.wait_for(
-        process.communicate(prompt.encode("utf-8")),
-        timeout=BOB_TIMEOUT_SECONDS,
-    )
-    stdout_text = stdout.decode("utf-8", errors="replace").strip()
-    stderr_text = stderr.decode("utf-8", errors="replace").strip()
+    def _run_sync() -> subprocess.CompletedProcess:
+        return subprocess.run(
+            _cmd,
+            input=prompt.encode("utf-8"),
+            capture_output=True,
+            timeout=BOB_TIMEOUT_SECONDS,
+            cwd=str(WORKSPACE_ROOT),
+            env=_env,
+        )
 
-    if process.returncode != 0:
-        detail = stderr_text or stdout_text or f"exit code {process.returncode}"
+    loop = asyncio.get_event_loop()
+    result = await loop.run_in_executor(None, _run_sync)
+
+    stdout_text = result.stdout.decode("utf-8", errors="replace").strip()
+    stderr_text = result.stderr.decode("utf-8", errors="replace").strip()
+
+    print(f"[Bob/{chat_mode}] returncode={result.returncode} stdout_len={len(stdout_text)} stderr_len={len(stderr_text)}")
+    if stderr_text:
+        print(f"[Bob/{chat_mode}] stderr: {stderr_text[:300]}")
+    if not stdout_text:
+        print(f"[Bob/{chat_mode}] EMPTY stdout — command: {get_bob_command_parts('--chat-mode', chat_mode, '--hide-intermediary-output', '-o', 'text')}")
+
+    # Treat the response as successful if stdout has content.
+    # Bob exits 1 locally due to the VS Code IDE companion not being connected
+    # (stderr: "[ERROR] [IDEClient] Failed to connect ...") - this is harmless.
+    if stdout_text:
+        return stdout_text
+
+    if result.returncode != 0:
+        detail = stderr_text or f"Bob shell exited with code {result.returncode}"
         raise RuntimeError(detail)
 
-    if not stdout_text:
-        raise RuntimeError(stderr_text or "Bob shell returned empty output")
-
-    return stdout_text
+    raise RuntimeError(stderr_text or "Bob shell returned empty output")
 
 
 # Made with Bob

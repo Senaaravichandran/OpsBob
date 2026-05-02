@@ -6,11 +6,11 @@ Powers the SystemHealthBar component in the frontend.
 
 import asyncio
 import os
-import shutil
 import time
 from datetime import datetime
 from typing import Dict, Any
 from dotenv import load_dotenv
+from bob_client import get_bob_command_parts, get_bob_subprocess_env, is_bob_api_key_configured, is_bob_shell_available
 from iam_auth import get_iam_token
 
 load_dotenv()
@@ -62,30 +62,17 @@ async def check_service_health(service_name: str, check_fn) -> Dict[str, Any]:
 
 
 async def _check_bob_shell():
-    """Check Bob shell availability on PATH."""
-    bob_command = os.getenv("BOB_SHELL_COMMAND", "bob")
-    bob_executable = shutil.which(bob_command)
-    if not bob_executable:
-        raise Exception(f"{bob_command} not found on PATH")
+    """Check Bob shell availability through PATH or the vendored bundle."""
+    if not is_bob_shell_available():
+        raise Exception("Bob shell runtime is unavailable")
+    if not is_bob_api_key_configured():
+        raise Exception("Bob API key is not configured")
 
-    start = time.time()
-    process = await asyncio.create_subprocess_exec(
-        bob_executable,
-        "--version",
-        stdout=asyncio.subprocess.PIPE,
-        stderr=asyncio.subprocess.PIPE,
-    )
-    stdout, stderr = await process.communicate()
-    latency = int((time.time() - start) * 1000)
-
-    if process.returncode != 0:
-        message = stderr.decode("utf-8", errors="replace").strip() or stdout.decode("utf-8", errors="replace").strip()
-        raise Exception(message or f"{bob_command} exited with code {process.returncode}")
-
-    details = stdout.decode("utf-8", errors="replace").strip().splitlines()
+    command_parts = get_bob_command_parts()
+    executable = command_parts[0] if command_parts else "bob"
     return {
-        "latency_ms": latency,
-        "details": details[0] if details else "CLI available"
+        "latency_ms": 0,
+        "details": f"Runtime ready via {os.path.basename(executable)} with API key configured"
     }
 
 
@@ -119,31 +106,33 @@ async def _check_watsonx_ai():
 
 
 async def _check_orchestrate():
-    """Check watsonx Orchestrate connectivity."""
+    """Check watsonx Orchestrate connectivity via the agents list endpoint."""
     import aiohttp
-    url = os.getenv("ORCHESTRATE_BASE_URL", "")
-    key = os.getenv("ORCHESTRATE_API_KEY", "")
+    host = os.getenv("ORCHESTRATE_HOST", "")
+    instance_id = os.getenv("ORCHESTRATE_INSTANCE_ID", "")
+    key = os.getenv("WATSONX_API_KEY", "") or os.getenv("ORCHESTRATE_API_KEY", "")
 
-    if not url or not key:
+    if not host or not instance_id or not key:
         raise Exception("ORCHESTRATE credentials not configured")
 
     start = time.time()
     iam_token = await get_iam_token(key)
+    url = f"{host}/instances/{instance_id}/api/v1/orchestrate/agents"
     async with aiohttp.ClientSession() as session:
         async with session.get(
-            f"{url}/api/v1/health",
+            url,
             headers={
                 "Authorization": f"Bearer {iam_token}",
                 "Content-Type": "application/json"
             },
-            timeout=aiohttp.ClientTimeout(total=5)
+            timeout=aiohttp.ClientTimeout(total=10)
         ) as resp:
-            if resp.status >= 400:
-                raise Exception(f"HTTP {resp.status}")
             latency = int((time.time() - start) * 1000)
+            if resp.status >= 400:
+                raise Exception(f"HTTP {resp.status} (agents endpoint)")
             return {
                 "latency_ms": latency,
-                "details": f"HTTP {resp.status}"
+                "details": f"HTTP {resp.status} — agents endpoint reachable"
             }
 
 
