@@ -14,6 +14,7 @@ import FixActions from './components/FixActions'
 import AuditTrail from './components/AuditTrail'
 import MemoryTelemetry from './components/MemoryTelemetry'
 import SystemHealthBar from './components/SystemHealthBar'
+import DemoServiceLogs from './components/DemoServiceLogs'
 import './Dashboard.css'
 
 const AGENT_LABELS = {
@@ -523,6 +524,7 @@ function Dashboard() {
             mttr={mttr}
             resolved={resolved}
           />
+          <DemoServiceLogs />
         </section>
       </main>
 

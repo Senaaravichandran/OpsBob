@@ -1,0 +1,170 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>OpsBob | Production Intelligence</title>
+    <meta
+      name="description"
+      content="OpsBob is an IBM Carbon themed landing page for autonomous production intelligence and incident orchestration."
+    />
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <header class="topbar" aria-label="OpsBob navigation">
+      <a class="brand" href="#top" aria-label="OpsBob home">
+        <span class="brand__mark" aria-hidden="true">OB</span>
+        <span class="brand__text">
+          <strong>OpsBob</strong>
+          <span>Production intelligence</span>
+        </span>
+      </a>
+
+      <nav class="nav" aria-label="Landing sections">
+        <a href="#platform">Platform</a>
+        <a href="#governance">Governance</a>
+        <a href="#outcomes">Outcomes</a>
+      </nav>
+    </header>
+
+    <main id="top">
+      <section class="hero" aria-labelledby="hero-title">
+        <div class="hero__media" aria-hidden="true">
+          <img src="./assets/opsbob-logo.png" alt="" />
+        </div>
+
+        <div class="hero__content">
+          <p class="eyebrow">IBM Carbon themed landing</p>
+          <h1 id="hero-title">OpsBob</h1>
+          <p class="hero__lede">
+            Autonomous production intelligence for diagnosing incidents, planning safe fixes,
+            and coordinating governed remediation from one operational command surface.
+          </p>
+
+          <div class="hero__actions" aria-label="Primary actions">
+            <a class="button button--primary" href="#platform">Explore platform</a>
+            <a class="button button--secondary" href="#governance">View guardrails</a>
+          </div>
+        </div>
+
+        <div class="hero__signals" aria-label="Platform readiness">
+          <div class="signal">
+            <span class="signal__label">Incident intake</span>
+            <strong>Live</strong>
+          </div>
+          <div class="signal">
+            <span class="signal__label">Risk routing</span>
+            <strong>Guarded</strong>
+          </div>
+          <div class="signal">
+            <span class="signal__label">Deployment path</span>
+            <strong>Audited</strong>
+          </div>
+        </div>
+      </section>
+
+      <section id="platform" class="section section--surface" aria-labelledby="platform-title">
+        <div class="section__intro">
+          <p class="eyebrow">Command center</p>
+          <h2 id="platform-title">A focused surface for production response.</h2>
+          <p>
+            OpsBob presents incident context, orchestration status, and response evidence in a
+            clean Carbon dark theme built for fast scanning and confident action.
+          </p>
+        </div>
+
+        <div class="command-preview" aria-label="OpsBob command center preview">
+          <div class="preview-card preview-card--incident">
+            <span class="tag tag--red">S2 incident</span>
+            <h3>Memory pressure detected</h3>
+            <p>demo-service-3001 is trending above baseline with payment latency impact.</p>
+          </div>
+
+          <div class="preview-card preview-card--flow">
+            <div class="flow-step">
+              <span class="flow-step__index">01</span>
+              <span>
+                <strong>Observe</strong>
+                <small>Correlate logs, health checks, metrics, and queue signals.</small>
+              </span>
+            </div>
+            <div class="flow-step">
+              <span class="flow-step__index">02</span>
+              <span>
+                <strong>Reason</strong>
+                <small>Generate a remediation plan with blast-radius awareness.</small>
+              </span>
+            </div>
+            <div class="flow-step">
+              <span class="flow-step__index">03</span>
+              <span>
+                <strong>Act</strong>
+                <small>Route fixes through approval, deployment, and audit records.</small>
+              </span>
+            </div>
+          </div>
+
+          <div class="preview-card preview-card--decision">
+            <span class="tag tag--green">Commander decision</span>
+            <h3>Approved with rollback ready</h3>
+            <dl>
+              <div>
+                <dt>Target MTTR</dt>
+                <dd>&lt; 5 min</dd>
+              </div>
+              <div>
+                <dt>Audit state</dt>
+                <dd>Complete</dd>
+              </div>
+            </dl>
+          </div>
+        </div>
+      </section>
+
+      <section id="governance" class="section" aria-labelledby="governance-title">
+        <div class="section__intro">
+          <p class="eyebrow">Governance</p>
+          <h2 id="governance-title">Designed for safe operational automation.</h2>
+        </div>
+
+        <div class="tile-grid">
+          <article class="tile">
+            <span class="tile__icon" aria-hidden="true">01</span>
+            <h3>Risk-aware planning</h3>
+            <p>Every proposed change includes context, confidence, and a clear approval route.</p>
+          </article>
+          <article class="tile">
+            <span class="tile__icon" aria-hidden="true">02</span>
+            <h3>Observable execution</h3>
+            <p>Live service state, deployment logs, and memory telemetry remain visible together.</p>
+          </article>
+          <article class="tile">
+            <span class="tile__icon" aria-hidden="true">03</span>
+            <h3>Auditable outcomes</h3>
+            <p>Incident decisions and remediation actions are captured for review and traceability.</p>
+          </article>
+        </div>
+      </section>
+
+      <section id="outcomes" class="outcomes" aria-label="OpsBob outcomes">
+        <div>
+          <span class="metric">3x</span>
+          <span>faster triage path</span>
+        </div>
+        <div>
+          <span class="metric">24/7</span>
+          <span>production watch</span>
+        </div>
+        <div>
+          <span class="metric">1</span>
+          <span>governed response flow</span>
+        </div>
+      </section>
+    </main>
+
+    <footer class="footer">
+      <span>Team Dragorithm</span>
+      <span>IBM Bob Hackathon 2026</span>
+    </footer>
+  </body>
+</html>

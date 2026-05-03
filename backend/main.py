@@ -9,7 +9,7 @@ import json
 import os
 from datetime import datetime
 from typing import Dict, Any, Optional
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel
@@ -117,8 +117,8 @@ async def startup_event():
 async def receive_webhook(incident: IncidentWebhook):
     """Receives incident alerts from Instana or manual trigger."""
     incident_data = incident.dict()
-    incident_id = incident_data.get("id") or incident_data.get("incidentId") or f"INC-{int(datetime.now().timestamp())}"
     service = incident_data.get("entityName") or incident_data.get("service") or "payments-api"
+    incident_id = incident_data.get("id") or incident_data.get("incidentId") or f"INC-{service[:8].upper()}-{int(datetime.now().timestamp() * 1000)}"
     severity = incident_data.get("severity", "HIGH")
     inc_type = incident_data.get("type", "MEMORY_LEAK")
 
@@ -692,6 +692,85 @@ async def get_queue():
     return {"queue": incident_queue, "length": len(incident_queue)}
 
 
+# ── Demo-service SSE proxy + payment proxy ───────────────────────
+@app.get("/demo-services/logs/{port}")
+async def stream_service_logs(port: int):
+    if not (1024 <= port <= 65535):
+        raise HTTPException(status_code=400, detail="Invalid port")
+
+    async def event_gen():
+        import aiohttp
+        connected = False
+        while True:
+            try:
+                async with aiohttp.ClientSession() as session:
+                    async with session.get(
+                        f"http://localhost:{port}/logs/stream",
+                        timeout=aiohttp.ClientTimeout(total=None, connect=3),
+                    ) as resp:
+                        if resp.status != 200:
+                            yield f"data: {json.dumps({'line': f'[WARN] Service on :{port} returned HTTP {resp.status}'})}\n\n"
+                            await asyncio.sleep(3)
+                            continue
+                        connected = True
+                        async for chunk in resp.content.iter_any():
+                            if chunk:
+                                yield chunk.decode("utf-8")
+                        connected = False
+                        yield f"data: {json.dumps({'line': f'[WARN] Service on :{port} stream ended, retrying...'})}\n\n"
+                        await asyncio.sleep(2)
+            except aiohttp.ClientConnectorError:
+                msg = "[WARN] Service stopped, retrying..." if connected else f"[WARN] Cannot connect to :{port} — is the service running?"
+                connected = False
+                yield f"data: {json.dumps({'line': msg})}\n\n"
+                await asyncio.sleep(3)
+            except asyncio.CancelledError:
+                return
+            except Exception as exc:
+                yield f"data: {json.dumps({'line': f'[ERROR] {exc}'})}\n\n"
+                await asyncio.sleep(3)
+
+    return StreamingResponse(
+        event_gen(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"},
+    )
+
+
+@app.post("/demo-services/{port}/payment")
+async def proxy_demo_payment(port: int, request: Request):
+    if not (1024 <= port <= 65535):
+        raise HTTPException(status_code=400, detail="Invalid port")
+    import aiohttp
+    try:
+        body = await request.json()
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"http://localhost:{port}/payment",
+                json=body,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                return await resp.json()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
+@app.post("/demo-services/{port}/trigger-incident")
+async def proxy_demo_trigger(port: int):
+    if not (1024 <= port <= 65535):
+        raise HTTPException(status_code=400, detail="Invalid port")
+    import aiohttp
+    try:
+        async with aiohttp.ClientSession() as session:
+            async with session.post(
+                f"http://localhost:{port}/trigger-incident",
+                timeout=aiohttp.ClientTimeout(total=10),
+            ) as resp:
+                return await resp.json()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc))
+
+
 # ── GET /health ──────────────────────────────────────────────────
 @app.get("/health")
 async def health_check():
@@ -700,6 +779,6 @@ async def health_check():
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run("main:app", host="0.0.0.0", port=8000, reload=True, log_level="info")
+    uvicorn.run("main:app", host="0.0.0.0", port=8001, reload=True, log_level="info")
 
 # Made with Bob

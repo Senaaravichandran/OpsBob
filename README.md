@@ -1,311 +1,253 @@
-# OpsBob - AI-Powered SRE Assistant
+# OpsBob
 
-OpsBob is an autonomous Site Reliability Engineering (SRE) assistant that detects production incidents, diagnoses root causes, generates fixes, and deploys them automatically—all powered by IBM's AI and cloud technologies. When a memory leak is detected in a production service, OpsBob analyzes the codebase, identifies the exact bug location, proposes a fix with unit tests, and deploys it to IBM Cloud Code Engine, reducing Mean Time To Resolution (MTTR) from hours to minutes.
+OpsBob is an IBM-focused production intelligence demo for autonomous SRE response. It ingests an incident, enriches it with Instana-style metrics and traces, asks IBM Bob to diagnose and generate a fix, uses IBM watsonx.ai Granite for risk and report generation, routes verification through IBM watsonx Orchestrate, and streams the whole workflow to an IBM Carbon React dashboard.
 
-## How to Run the Demo
+The demo incident is a real Node.js memory leak in `demo-service`: an unbounded in-memory `Map` grows under payment traffic. OpsBob reads that source code, identifies the leak, generates a structured replacement file plus optional regression test, verifies the result, and deploys the approved fix through BobShell.
 
-### Prerequisites
-- Node.js 18+ and npm
-- Python 3.9+ and pip
-- IBM Cloud account (for production deployment)
+## IBM Focus
 
-### Step 1: Install Dependencies
+| IBM capability | How this repo uses it |
+| --- | --- |
+| IBM Bob shell | Runs the three analysis phases: `ask`, `plan`, and `code`. The backend calls Bob non-interactively through `backend/bob_client.py`. |
+| IBM watsonx.ai | Uses Granite through `backend/watsonx_client.py` for structured risk assessment, incident summaries, and post-incident report text. |
+| IBM Granite | Default model is `ibm/granite-4-h-small`, configurable with `WATSONX_MODEL_ID`. |
+| IBM watsonx Orchestrate | Invokes a commander agent through `backend/orchestrate_client.py` and exposes tool endpoints for static analysis, tests, approval routing, and post-incident reporting. |
+| IBM Instana | `mcp-server/` provides MCP tools for active incidents, service metrics, and stack traces. With Instana credentials it calls Instana APIs; without them it falls back to live demo-service data. |
+| IBM Carbon Design System | The frontend uses `@carbon/react`, Carbon icons, IBM Plex styling, and a dark operations dashboard. |
+| IBM Cloud target | The environment template includes IBM Cloud / Code Engine variables. The current checked-in deploy script applies fixes locally and restarts the demo service; Code Engine deployment is an architecture target, not the active script behavior. |
 
-**Backend:**
+## Current Runtime Flow
+
+```text
+Instana or demo webhook
+  -> FastAPI backend /webhook
+  -> MCP enrichment from Instana or local demo-service fallback
+  -> source-code context assembled from demo-service files
+  -> IBM Bob shell ask/plan/code stream
+  -> watsonx.ai Granite risk assessment
+  -> local 3-agent verification pipeline
+  -> watsonx Orchestrate commander decision
+  -> BobShell deploy stream when approved
+  -> post-incident report and incident-history.json update
+  -> React + Carbon dashboard over SSE
+```
+
+## Project Structure
+
+```text
+backend/                 FastAPI orchestration layer
+  main.py                Webhooks, SSE streams, approval, deploy, Orchestrate tool APIs
+  bob_client.py          IBM Bob shell integration and structured fix parsing
+  watsonx_client.py      watsonx.ai / Granite client
+  orchestrate_client.py  watsonx Orchestrate commander invocation
+  orchestrate_agents.py  Static analysis, test runner, approval router, report agent
+  mcp_client.py          Python client for the Instana MCP server
+  bobshell.py            Applies Bob's fix and streams deployment audit logs
+  deploy_fix.sh          Local deployment recipe for the demo service
+
+demo-service/            Payments API with intentional memory leaks
+  server.js              Main Express service and leaking /payment route
+  metrics.js             Real process memory metrics
+  debug/traces.js        Local stack-trace capture fallback
+  store/sessionStore.js  Secondary leaking in-memory session store
+  test/                  Mocha tests
+
+mcp-server/              TypeScript MCP server for Instana-style observability tools
+frontend/                React + Vite + IBM Carbon dashboard
+orchestrate/             watsonx Orchestrate agent YAML definitions
+orchestrate_skill.json   Skill definition for review_bob_fix
+incident-history.json    Institutional memory from resolved incidents
+landing/                 Standalone Carbon-themed landing page
+tasks/, docs/            Analysis notes, verification plans, and historical docs
+```
+
+Generated or runtime-heavy directories such as `node_modules`, `venv`, `.venv`, `__pycache__`, logs, and `demo-service1` through `demo-service4` are not part of the core source flow.
+
+## Prerequisites
+
+- Node.js 18+
+- Python 3.9+; Python 3.12 is used by the backend Dockerfile
+- npm
+- Bash-compatible shell for `*.sh` scripts, such as Git Bash or WSL on Windows
+- IBM Bob shell available as `bob`, or the vendored backend runtime at `backend/vendor/bob.js`
+- IBM Cloud API key with watsonx.ai access
+- Optional: IBM Instana tenant and API token
+- Optional: watsonx Orchestrate instance, agent, and environment IDs
+
+## Environment
+
+Copy the template and fill the IBM values:
+
+```bash
+cp .env.example .env
+```
+
+Key variables:
+
+```env
+# IBM Bob
+BOB_API_KEY=your_bob_api_key_here
+BOB_API_URL=https://api.bob.ibm.com
+
+# IBM watsonx.ai / Granite
+WATSONX_API_KEY=your_watsonx_api_key_here
+WATSONX_PROJECT_ID=your_project_id_here
+WATSONX_SPACE_ID=
+WATSONX_URL=https://us-south.ml.cloud.ibm.com
+WATSONX_MODEL_ID=ibm/granite-4-h-small
+
+# IBM watsonx Orchestrate
+ORCHESTRATE_HOST=https://api.us-south.watson-orchestrate.cloud.ibm.com
+ORCHESTRATE_INSTANCE_ID=your_instance_id
+ORCHESTRATE_AGENT_ID=your_commander_agent_id
+ORCHESTRATE_ENV_ID=your_environment_id
+BACKEND_URL=http://localhost:8000
+
+# IBM Instana, optional
+INSTANA_BASE_URL=https://your-tenant.instana.io
+INSTANA_API_TOKEN=your_instana_api_token_here
+
+# Local demo
+SOURCE_FILES_PATH=demo-service
+DEMO_SERVICE_URL=http://localhost:3001
+BACKEND_PORT=8000
+DASHBOARD_URL=http://localhost:3000
+```
+
+The backend exchanges IBM Cloud API keys for IAM bearer tokens in `backend/iam_auth.py`; watsonx.ai and Orchestrate calls should not use the raw API key directly as a bearer token.
+
+## Install
+
 ```bash
 cd backend
 pip install -r requirements.txt
 cd ..
-```
 
-**Frontend:**
-```bash
-cd frontend
-npm install
-cd ..
-```
-
-**Demo Service:**
-```bash
 cd demo-service
 npm install
 cd ..
-```
 
-**MCP Server:**
-```bash
 cd mcp-server
 npm install
 npm run build
 cd ..
+
+cd frontend
+npm install
+cd ..
 ```
 
-### Step 2: Configure Environment Variables
+## Run Locally
 
-Create a `.env` file in the root directory:
+Terminal 1, demo payments API:
 
-```env
-BOB_API_KEY=your_ibm_bob_api_key_here
-BOB_API_URL=https://api.bob.ibm.com
-IBM_CLOUD_REGION=us-south
-CODE_ENGINE_PROJECT=opsbob-demo
+```bash
+cd demo-service
+npm start
 ```
 
-### Step 3: Start the Backend
+Terminal 2, backend:
 
 ```bash
 cd backend
-uvicorn main:app --reload
+python -m uvicorn main:app --host 0.0.0.0 --port 8000 --reload
 ```
 
-The FastAPI backend will start on `http://localhost:8000`
-
-### Step 4: Start the Frontend
-
-In a new terminal:
+Terminal 3, frontend:
 
 ```bash
 cd frontend
+VITE_BACKEND_TARGET=http://localhost:8000 npm run dev
+```
+
+On PowerShell:
+
+```powershell
+cd frontend
+$env:VITE_BACKEND_TARGET="http://localhost:8000"
 npm run dev
 ```
 
-The React dashboard will start on `http://localhost:3000`
+Open `http://localhost:3000`.
 
-### Step 5: Trigger the Demo
+## Trigger A Demo Incident
 
-In a new terminal:
+With the backend and demo service running:
 
 ```bash
 bash demo-trigger.sh
 ```
 
-This script will:
-1. Start the demo payments-api service
-2. Start the load generator (simulates traffic)
-3. Trigger a mock incident webhook
-4. Display the dashboard URL
-
-**Open http://localhost:3000 to watch OpsBob in action!**
-
-### Stop the Demo
+Or trigger manually:
 
 ```bash
-bash stop-demo.sh
+curl -X POST http://localhost:8000/webhook \
+  -H "Content-Type: application/json" \
+  -d '{"service":"payments-api","severity":"HIGH","type":"MEMORY_LEAK","incidentId":"INC-DEMO-001","message":"Memory usage growing; threshold exceeded"}'
 ```
 
-## Architecture
+In the dashboard, select the incident and click `ANALYZE WITH BOB`. The center panel streams Bob's `ask`, `plan`, and `code` phases, the Granite risk card, the verification pipeline, and the watsonx Orchestrate commander decision. If approved, deployment logs stream through BobShell.
 
-```
-┌─────────────────────────────────────────────────────────────────┐
-│                         OpsBob System                            │
-└─────────────────────────────────────────────────────────────────┘
+## API Surface
 
-    ┌──────────────┐
-    │   Instana    │  (Monitoring & Alerting)
-    │  Mock/Real   │
-    └──────┬───────┘
-           │ Webhook
-           ▼
-    ┌──────────────┐
-    │   FastAPI    │  (Orchestration Layer)
-    │   Backend    │  - Incident Management
-    │              │  - SSE Streaming
-    └──────┬───────┘
-           │
-           ├─────────────────┐
-           │                 │
-           ▼                 ▼
-    ┌──────────────┐  ┌──────────────┐
-    │  IBM Bob API │  │    BobShell  │
-    │              │  │              │
-    │ - Code Read  │  │ - Apply Fix  │
-    │ - Diagnosis  │  │ - Run Tests  │
-    │ - Fix Gen    │  │ - Deploy     │
-    └──────┬───────┘  └──────┬───────┘
-           │                 │
-           │                 ▼
-           │          ┌──────────────┐
-           │          │ IBM Cloud    │
-           │          │ Code Engine  │
-           │          │              │
-           │          │ - Container  │
-           │          │ - Auto-scale │
-           │          └──────────────┘
-           │
-           ▼
-    ┌──────────────┐
-    │    React     │  (Dashboard)
-    │  Dashboard   │  - IBM Carbon Design
-    │              │  - Real-time Updates
-    │              │  - Audit Trail
-    └──────────────┘
-```
+| Method | Endpoint | Purpose |
+| --- | --- | --- |
+| `POST` | `/webhook` | Receives Instana or mock incidents and assembles Bob context. |
+| `GET` | `/stream/{incidentId}` | Streams Bob analysis, Granite risk, verification, and Orchestrate commander events. |
+| `POST` | `/approve/{incidentId}` | Manual approval fallback after verification completes. |
+| `GET` | `/deploy-stream/{incidentId}` | Streams BobShell fix application and post-incident reporting. |
+| `GET` | `/orchestrate/stream/{incidentId}` | Direct watsonx Orchestrate commander run as SSE. |
+| `POST` | `/orchestrate/decision` | Receives approve, escalate, or reject decisions. |
+| `POST` | `/orchestrate/static-analysis` | Tool endpoint for StaticAnalysisAgent. |
+| `POST` | `/orchestrate/run-tests` | Tool endpoint for TestRunnerAgent. |
+| `POST` | `/orchestrate/route-approval` | Tool endpoint for ApprovalRouterAgent. |
+| `POST` | `/orchestrate/post-incident` | Tool endpoint for PostIncidentReportAgent. |
+| `GET` | `/system-health` | Checks Bob shell, watsonx.ai, Orchestrate, Instana, and demo-service health. |
+| `GET` | `/runbook` | Returns `incident-history.json`. |
+| `GET` | `/audit/{incidentId}` | Returns incident details, pipeline results, and report data. |
 
-## IBM Technologies Used
+## Orchestrate Registration
 
-OpsBob leverages six key IBM technologies:
+The repo includes two Orchestrate registration surfaces:
 
-### 1. **IBM Bob (AI Assistant)**
-- Multi-phase code analysis (Ask, Plan, Code)
-- Natural language understanding of incidents
-- Automated fix generation with unit tests
-- Context-aware code modifications
+- `orchestrate_skill.json` defines `review_bob_fix`, whose endpoint is `POST {BACKEND_URL}/orchestrate/decision`.
+- `orchestrate/*.yaml` defines the specialist agents for static analysis, test running, approval routing, and post-incident reporting.
 
-### 2. **IBM Cloud Code Engine**
-- Serverless container deployment
-- Automatic scaling based on load
-- Zero-downtime deployments
-- Built-in monitoring and logging
+For real Orchestrate tool calls, your backend must be reachable by Orchestrate. Update `BACKEND_URL` and the tool server bindings to a public HTTPS URL, then publish the tools and commander agent in your watsonx Orchestrate environment.
 
-### 3. **IBM Instana (Monitoring)**
-- Real-time application performance monitoring
-- Automatic incident detection
-- Stack trace collection
-- Memory leak identification
+Helper scripts in `backend/_patch_tools.py`, `_patch_schemas.py`, and `_patch_agents.py` were used for patching existing Orchestrate tool definitions. Treat them as admin utilities and review IDs before running them against another instance.
 
-### 4. **IBM Carbon Design System**
-- Enterprise-grade React components
-- Dark theme optimized for operations
-- Accessible UI patterns
-- Consistent design language
-
-### 5. **Model Context Protocol (MCP)**
-- Standardized AI tool integration
-- Structured incident data exchange
-- Real-time streaming capabilities
-- Extensible tool framework
-
-### 6. **IBM Cloud Container Registry**
-- Secure container image storage
-- Vulnerability scanning
-- Global image distribution
-- Integration with Code Engine
-
-## Project Structure
-
-```
-opsbob/
-├── backend/                 # FastAPI orchestration layer
-│   ├── main.py             # API endpoints & SSE streaming
-│   ├── bob_client.py       # IBM Bob API integration
-│   ├── bobshell.py         # Deployment automation
-│   └── requirements.txt    # Python dependencies
-├── frontend/               # React dashboard
-│   ├── src/
-│   │   ├── App.jsx        # Main dashboard component
-│   │   ├── App.css        # Styles
-│   │   └── main.jsx       # Entry point
-│   ├── package.json       # Node dependencies
-│   └── vite.config.js     # Vite configuration
-├── demo-service/          # Mock payments API
-│   ├── server.js          # Express server with memory leak
-│   ├── load-generator.js  # Traffic simulator
-│   └── Dockerfile         # Container definition
-├── mcp-server/            # Model Context Protocol server
-│   ├── src/index.ts       # MCP tools implementation
-│   ├── package.json       # TypeScript dependencies
-│   └── README.md          # MCP documentation
-├── demo-trigger.sh        # One-command demo starter
-├── stop-demo.sh           # Demo cleanup script
-└── README.md              # This file
-```
-
-## Demo Flow
-
-1. **Incident Detection** (0:00)
-   - Load generator causes memory leak in payments-api
-   - Instana detects threshold breach
-   - Webhook fires to OpsBob backend
-
-2. **Bob Analysis** (0:05 - 1:30)
-   - **Ask Phase**: Reads server.js, identifies sessionCache
-   - **Plan Phase**: Diagnoses unbounded Map growth
-   - **Code Phase**: Generates fix with TTL and cleanup
-
-3. **Human Approval** (1:30 - 1:45)
-   - Engineer reviews proposed fix in dashboard
-   - Clicks "✓ Approve Fix" button
-
-4. **Automated Deployment** (1:45 - 4:00)
-   - BobShell applies fix to source code
-   - Runs smoke tests
-   - Builds Docker container
-   - Deploys to Code Engine
-   - Monitors for stability
-
-5. **Resolution** (4:00)
-   - Memory drops from 340MB to 128MB
-   - Toast notification: "Incident Resolved by OpsBob"
-   - MTTR: ~4 minutes
-
-## Key Features
-
-- ✅ **Autonomous Operation**: Zero-touch incident resolution
-- ✅ **Real-Time Streaming**: Live updates via Server-Sent Events
-- ✅ **Multi-Phase Analysis**: Structured problem-solving approach
-- ✅ **Human-in-the-Loop**: Optional approval gate for safety
-- ✅ **Audit Trail**: Complete deployment log with timestamps
-- ✅ **MTTR Tracking**: Automatic calculation of resolution time
-- ✅ **Demo Mode**: One-click incident trigger for presentations
-
-## Development
-
-### Running Tests
+## Tests And Checks
 
 ```bash
-# Backend tests
-cd backend
-pytest
-
-# Frontend tests
-cd frontend
+cd demo-service
 npm test
+
+cd ../mcp-server
+npm run build
+
+cd ../frontend
+npm run build
 ```
 
-### Building for Production
+Backend smoke checks:
 
 ```bash
-# Backend
 cd backend
-pip install -r requirements.txt
-
-# Frontend
-cd frontend
-npm run build
-
-# MCP Server
-cd mcp-server
-npm run build
+python -m py_compile main.py bob_client.py watsonx_client.py orchestrate_client.py orchestrate_agents.py
+python verify_env.py
 ```
 
-### Environment Variables
+`verify_env.py` still checks for `gcloud` because earlier deployment work targeted Cloud Run. That check is legacy relative to the IBM-centered architecture and the current local `deploy_fix.sh` behavior.
 
-| Variable | Description | Required |
-|----------|-------------|----------|
-| `BOB_API_KEY` | IBM Bob API authentication token | Yes |
-| `BOB_API_URL` | IBM Bob API endpoint | Yes |
-| `IBM_CLOUD_REGION` | IBM Cloud region (e.g., us-south) | Yes |
-| `CODE_ENGINE_PROJECT` | Code Engine project name | Yes |
+## Demo Reality Notes
 
-## Troubleshooting
-
-**Backend won't start:**
-- Check Python version: `python --version` (needs 3.9+)
-- Verify dependencies: `pip list | grep fastapi`
-
-**Frontend won't connect:**
-- Ensure backend is running on port 8000
-- Check browser console for CORS errors
-- Verify Vite proxy configuration
-
-**Demo trigger fails:**
-- Confirm backend is running: `curl http://localhost:8000/health`
-- Check if ports 3001 (demo-service) and 8000 (backend) are available
+- Instana is optional for local demos. If Instana is not configured, MCP tools call `demo-service` endpoints for real heap metrics and local traces.
+- watsonx.ai calls have safe fallbacks when credentials, project association, or model runtime are unavailable.
+- watsonx Orchestrate commander calls fall back to the local verification pipeline if Orchestrate is unavailable.
+- Bob analysis requires a working Bob shell runtime and API credentials; otherwise `/stream/{incidentId}` emits an analysis error.
+- The active deploy recipe writes Bob's structured fixed file into the workspace, optionally writes a generated regression test, runs the demo-service test suite, and restarts the local Node process when it is running on port `3001`.
 
 ## License
 
 MIT
-
-## Contributors
-
-Built for the IBM Hackathon 2024 - AI-Powered SRE Track

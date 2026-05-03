@@ -14,7 +14,8 @@ const apiProxyPaths = [
   '/system-health',
   '/memory-stats',
   '/incident-queue',
-  '/orchestrate'
+  '/orchestrate',
+  '/demo-services'
 ]
 const proxy = Object.fromEntries(apiProxyPaths.map((path) => [path, backendTarget]))
 
