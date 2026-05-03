@@ -1,2 +1,0 @@
-{"id":"8b0eef03-e4f5-4607-8a32-d0770e1f16d8","ts":"2026-05-02T22:35:04.326Z","path":"E:\\Drive - F\\Project\\OpsBob\\tasks\\MEMORY_LEAK_FIX_PLAN.md","version":"1.0.0","taskID":"35400f84-f0bd-41e9-a038-6d211c0e3ca9"}
-{"id":"60f58cdf-7df9-4664-84d0-a8945ac4934a","ts":"2026-05-02T23:08:41.274Z","path":"E:\\Drive - F\\Project\\OpsBob\\tasks\\INCIDENT_ANALYSIS_INC-E2E-TEST-001.md","version":"1.0.0","taskID":"ed9ce32f-8d20-4395-802d-75f335a8d808"}

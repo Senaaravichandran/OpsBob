@@ -26,17 +26,18 @@ from iam_auth import get_iam_token
 load_dotenv()
 
 WATSONX_API_KEY         = os.getenv("WATSONX_API_KEY")
-ORCHESTRATE_HOST        = os.getenv("ORCHESTRATE_HOST", "https://us-south.watson-orchestrate.cloud.ibm.com")
+ORCHESTRATE_HOST        = os.getenv("ORCHESTRATE_HOST", "https://api.us-south.watson-orchestrate.cloud.ibm.com")
 ORCHESTRATE_INSTANCE_ID = os.getenv("ORCHESTRATE_INSTANCE_ID", "12e43571-ef61-4ba1-ab1c-33db7d1bcef0")
-ORCHESTRATE_AGENT_ID    = os.getenv("ORCHESTRATE_AGENT_ID", "682d5d7a-f454-47db-af27-e5459c7350c2")
-ORCHESTRATE_ENV_ID      = os.getenv("ORCHESTRATE_ENV_ID", "891f6e96-3953-4372-8852-1caecb48b7fa")
+ORCHESTRATE_AGENT_ID    = os.getenv("ORCHESTRATE_AGENT_ID", "1c3fde20-54b1-4448-a8c2-2bc4f9fff376")
+ORCHESTRATE_ENV_ID      = os.getenv("ORCHESTRATE_ENV_ID", "5a564980-53bb-479e-b170-c5029e348314")
 BACKEND_URL             = os.getenv("BACKEND_URL", "http://localhost:8000")
 
-# Orchestrate API base — the REST endpoint lives at /api/v1/orchestrate/...
-_API_BASE = f"{ORCHESTRATE_HOST}/instances/{ORCHESTRATE_INSTANCE_ID}/api/v1/orchestrate"
+# Orchestrate API base — path is /v1/orchestrate/ (api. host does not use /api/ prefix)
+_API_BASE = f"{ORCHESTRATE_HOST}/instances/{ORCHESTRATE_INSTANCE_ID}/v1/orchestrate"
 
-# Orchestrate API timeout — generous because agents call our backend endpoints
-_RUN_TIMEOUT = 60  # 60s for a single run call
+# Orchestrate polling config
+_POLL_INTERVAL    = 3   # seconds between status polls
+_POLL_MAX_SECONDS = 90  # max wait time for a run to complete
 
 
 # ── Token helper ─────────────────────────────────────────────────────────────
@@ -56,18 +57,13 @@ async def _auth_headers() -> Dict[str, str]:
 
 async def _invoke_agent(message_text: str, thread_id: str = "") -> Dict[str, Any]:
     """
-    Send a message to the Orchestrate agent via POST /api/v1/orchestrate/runs.
-
-    Returns the full API response dict and the thread_id for follow-ups.
+    Start a run via POST /v1/orchestrate/runs, then poll GET /v1/orchestrate/runs/{run_id}
+    until status=completed.  Returns the completed run dict.
     """
-    url = f"{_API_BASE}/runs"
     hdrs = await _auth_headers()
     payload = {
         "agent_id": ORCHESTRATE_AGENT_ID,
-        "message": {
-            "role": "user",
-            "content": message_text,
-        },
+        "message": {"role": "user", "content": message_text},
     }
     if thread_id:
         payload["thread_id"] = thread_id
@@ -75,36 +71,74 @@ async def _invoke_agent(message_text: str, thread_id: str = "") -> Dict[str, Any
         payload["environment_id"] = ORCHESTRATE_ENV_ID
 
     async with aiohttp.ClientSession() as http:
+        # Step 1: start the run (returns immediately with run_id)
         async with http.post(
-            url, headers=hdrs, json=payload,
-            timeout=aiohttp.ClientTimeout(total=_RUN_TIMEOUT),
+            f"{_API_BASE}/runs",
+            headers=hdrs,
+            json=payload,
+            timeout=aiohttp.ClientTimeout(total=30),
         ) as resp:
             body = await resp.text()
             if resp.status not in (200, 201):
                 raise RuntimeError(
-                    f"Orchestrate runs failed: HTTP {resp.status} — {body[:300]}"
+                    f"Orchestrate POST /runs failed: HTTP {resp.status} — {body[:300]}"
                 )
-            data = json.loads(body)
-            return data
+            run_data = json.loads(body)
+
+        run_id = run_data.get("run_id")
+        if not run_id:
+            raise RuntimeError(f"No run_id in Orchestrate response: {body[:200]}")
+
+        # Step 2: poll until the run reaches a terminal state
+        poll_url = f"{_API_BASE}/runs/{run_id}"
+        terminal = {"completed", "failed", "cancelled", "expired"}
+        elapsed = 0
+        while elapsed < _POLL_MAX_SECONDS:
+            await asyncio.sleep(_POLL_INTERVAL)
+            elapsed += _POLL_INTERVAL
+            async with http.get(
+                poll_url,
+                headers=hdrs,
+                timeout=aiohttp.ClientTimeout(total=15),
+            ) as resp:
+                body = await resp.text()
+                if resp.status != 200:
+                    raise RuntimeError(
+                        f"Orchestrate GET /runs/{run_id} failed: HTTP {resp.status}"
+                    )
+                result = json.loads(body)
+
+            status = result.get("status", "pending")
+            if status in terminal:
+                if status != "completed":
+                    err = result.get("last_error") or status
+                    raise RuntimeError(f"Orchestrate run ended with status={status}: {err}")
+                return result
+
+        raise RuntimeError(
+            f"Orchestrate run {run_id} did not complete within {_POLL_MAX_SECONDS}s"
+        )
 
 
 # ── Decision parsing ──────────────────────────────────────────────────────────
 
 def _extract_text(response: Dict[str, Any]) -> str:
-    """Pull agent text from wherever the Orchestrate API puts it."""
-    # New API returns message.content or output.text
-    msg = response.get("message") or {}
-    if isinstance(msg, dict):
-        content = msg.get("content")
-        if content:
-            return content
+    """Pull agent text from the completed run response.
 
-    return (
-        (response.get("output") or {}).get("text")
-        or response.get("response")
-        or response.get("result")
-        or json.dumps(response)
-    )
+    Completed run shape: result.data.message.content[0].text
+    """
+    result_obj = response.get("result") or {}
+    if isinstance(result_obj, dict):
+        data = result_obj.get("data") or {}
+        if isinstance(data, dict):
+            msg = data.get("message") or {}
+            content_list = msg.get("content") or []
+            if isinstance(content_list, list) and content_list:
+                first = content_list[0]
+                if isinstance(first, dict) and first.get("text"):
+                    return first["text"]
+    # Last-resort: serialise the whole response so callers always get a string
+    return json.dumps(response)
 
 
 def _extract_thread_id(response: Dict[str, Any]) -> str:

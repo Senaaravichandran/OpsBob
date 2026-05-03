@@ -117,7 +117,7 @@ async def _check_orchestrate():
 
     start = time.time()
     iam_token = await get_iam_token(key)
-    url = f"{host}/instances/{instance_id}/api/v1/orchestrate/agents"
+    url = f"{host}/instances/{instance_id}/v1/orchestrate/agents"
     async with aiohttp.ClientSession() as session:
         async with session.get(
             url,
