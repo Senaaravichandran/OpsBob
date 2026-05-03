@@ -12,3 +12,4 @@
 .audit-trail__entry--deploy .audit-trail__msg { color: var(--ob-accent-blue); }
 .audit-trail__entry--info .audit-trail__msg { color: var(--ob-text-secondary); }
 .audit-trail__entry--agent .audit-trail__msg { color: var(--ob-accent-purple); }
+.audit-trail__entry--git_push .audit-trail__msg { color: #f0c040; font-weight: 600; }

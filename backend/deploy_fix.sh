@@ -50,7 +50,28 @@ if [ -n "$REGRESSION_TEST_TEMP" ] && [ -n "$REGRESSION_TEST_FILE" ]; then
 fi
 
 echo ""
-echo "[2/3] Running test suite..."
+echo "[2/3] Checking git diff and pushing changes..."
+cd "$REPO_ROOT"
+if git diff --quiet "$TARGET_FILE" 2>/dev/null; then
+    echo "⚠️  No diff detected for $TARGET_FILE — file may be unchanged"
+else
+    echo "✓ Diff detected in $TARGET_FILE — staging commit"
+    git add "$TARGET_FILE"
+    if [ -n "$REGRESSION_TEST_TEMP" ] && [ -n "$REGRESSION_TEST_FILE" ]; then
+        git add "$REGRESSION_TEST_FILE" 2>/dev/null || true
+    fi
+    COMMIT_MSG="fix(${INCIDENT_ID}): auto-deploy agent fix — $(date -u '+%Y-%m-%dT%H:%M:%SZ')"
+    git commit -m "$COMMIT_MSG" 2>&1 && echo "✓ Committed: $COMMIT_MSG"
+    CURRENT_BRANCH=$(git rev-parse --abbrev-ref HEAD 2>/dev/null || echo "main")
+    if git remote get-url origin &>/dev/null; then
+        git push origin "$CURRENT_BRANCH" 2>&1 && echo "✓ Pushed to origin/$CURRENT_BRANCH"
+    else
+        echo "⚠️  No git remote 'origin' configured — skipping push"
+    fi
+fi
+
+echo ""
+echo "[3/3] Running test suite..."
 cd "$REPO_ROOT/demo-service"
 if npm test --if-present 2>&1; then
     echo "✓ All tests passed"
@@ -59,7 +80,7 @@ else
 fi
 
 echo ""
-echo "[3/3] Restarting demo service..."
+echo "[4/4] Restarting demo service..."
 # Try to restart the local demo service by sending SIGHUP, or skip if not running
 DEMO_PID=$(lsof -t -i:3001 2>/dev/null || true)
 if [ -n "$DEMO_PID" ]; then

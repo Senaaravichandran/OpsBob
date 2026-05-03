@@ -144,7 +144,11 @@ async def apply_fix_and_deploy(
             elif line_text.startswith("ERROR:") or line_text.startswith("✗"):
                 # Error line
                 yield _log_event(f"⚠️  {line_text}")
-                
+
+            elif "Pushed to origin/" in line_text or "Committed:" in line_text:
+                # Git push / commit line — emit dedicated event type for frontend highlight
+                yield _git_event(line_text)
+
             elif line_text.startswith("✓"):
                 # Success line
                 yield _log_event(line_text)
@@ -189,6 +193,11 @@ def _log_event(message: str) -> str:
         "message": message
     }
     return f"data: {json.dumps(log_entry)}\n\n"
+
+
+def _git_event(message: str) -> str:
+    """Formats a git push/commit line as a distinct SSE event type for frontend highlighting."""
+    return f"data: {json.dumps({'type': 'git_push', 'timestamp': datetime.now().isoformat(), 'message': message})}\n\n"
 
 
 def _completion_event(incident_id: str, status: str, details: str) -> str:

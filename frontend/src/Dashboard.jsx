@@ -305,6 +305,7 @@ function Dashboard() {
       try {
         const data = JSON.parse(event.data)
         if (data.type === 'log') setDeployLogs(prev => [...prev, data])
+        if (data.type === 'git_push') setDeployLogs(prev => [...prev, data])
         if (data.type === 'completion') {
           const elapsed = Math.round((Date.now() - startTime) / 1000)
           const mins = Math.floor(elapsed / 60)
@@ -353,6 +354,10 @@ function Dashboard() {
           const data = JSON.parse(event.data)
 
           if (data.type === 'log') {
+            setDeployLogs(prev => [...prev, data])
+          }
+
+          if (data.type === 'git_push') {
             setDeployLogs(prev => [...prev, data])
           }
 

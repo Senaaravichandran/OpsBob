@@ -23,7 +23,7 @@ function AuditTrail({ logs }) {
               <span className="audit-trail__time">
                 {log.timestamp ? new Date(log.timestamp).toLocaleTimeString() : ''}
               </span>
-              <span className="audit-trail__msg">{log.message}</span>
+              <span className="audit-trail__msg">{log.type === 'git_push' ? `⬆ ${log.message}` : log.message}</span>
             </div>
           ))
         )}
