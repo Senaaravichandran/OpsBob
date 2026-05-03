@@ -6,8 +6,8 @@
              },
     "servers":  [
                     {
-                        "url":  "https://opsbob-backend-979788564023.us-central1.run.app",
-                        "description":  "OpsBob Cloud Run backend (us-central1)"
+                        "url":  "https://test.gowshik.in",
+                        "description":  "OpsBob Cloudflare tunnel (localhost:8001)"
                     }
                 ],
     "paths":  {
@@ -580,9 +580,15 @@
                                                            },
                                        "ApprovalRoutingRequest":  {
                                                                       "properties":  {
+                                                                                         "message":  {
+                                                                                                         "type":  "string",
+                                                                                                         "title":  "Message",
+                                                                                                         "description":  "Full natural language context including incident ID, static verdict, test results, and risk assessment."
+                                                                                                     },
                                                                                          "incident_id":  {
-                                                                                                             "type":  "string",
-                                                                                                             "title":  "Incident Id"
+                                                                                                             "anyOf":  [{"type":  "string"},{"type":  "null"}],
+                                                                                                             "title":  "Incident Id",
+                                                                                                             "default":  null
                                                                                                          },
                                                                                          "risk_score":  {
                                                                                                             "anyOf":  [
@@ -642,7 +648,7 @@
                                                                                      },
                                                                       "type":  "object",
                                                                       "required":  [
-                                                                                       "incident_id"
+                                                                                       "message"
                                                                                    ],
                                                                       "title":  "ApprovalRoutingRequest"
                                                                   },
@@ -798,9 +804,15 @@
                                                                },
                                        "PostIncidentRequest":  {
                                                                    "properties":  {
+                                                                                      "message":  {
+                                                                                                      "type":  "string",
+                                                                                                      "title":  "Message",
+                                                                                                      "description":  "Full natural language context including incident ID, timeline, and resolution details."
+                                                                                                  },
                                                                                       "incident_id":  {
-                                                                                                          "type":  "string",
-                                                                                                          "title":  "Incident Id"
+                                                                                                          "anyOf":  [{"type":  "string"},{"type":  "null"}],
+                                                                                                          "title":  "Incident Id",
+                                                                                                          "default":  null
                                                                                                       },
                                                                                       "timeline":  {
                                                                                                        "anyOf":  [
@@ -827,73 +839,65 @@
                                                                                   },
                                                                    "type":  "object",
                                                                    "required":  [
-                                                                                    "incident_id"
+                                                                                    "message"
                                                                                 ],
                                                                    "title":  "PostIncidentRequest"
                                                                },
                                        "StaticAnalysisRequest":  {
                                                                      "properties":  {
+                                                                                        "message":  {
+                                                                                                        "type":  "string",
+                                                                                                        "title":  "Message",
+                                                                                                        "description":  "Full natural language context including incident ID, code diff, and any other details needed for static analysis."
+                                                                                                    },
                                                                                         "incident_id":  {
-                                                                                                            "type":  "string",
-                                                                                                            "title":  "Incident Id"
+                                                                                                            "anyOf":  [{"type":  "string"},{"type":  "null"}],
+                                                                                                            "title":  "Incident Id",
+                                                                                                            "default":  null
                                                                                                         },
                                                                                         "code_diff":  {
-                                                                                                          "type":  "string",
-                                                                                                          "title":  "Code Diff"
+                                                                                                          "anyOf":  [{"type":  "string"},{"type":  "null"}],
+                                                                                                          "title":  "Code Diff",
+                                                                                                          "default":  null
                                                                                                       },
                                                                                         "plan_text":  {
-                                                                                                          "anyOf":  [
-                                                                                                                        {
-                                                                                                                            "type":  "string"
-                                                                                                                        },
-                                                                                                                        {
-                                                                                                                            "type":  "null"
-                                                                                                                        }
-                                                                                                                    ],
+                                                                                                          "anyOf":  [{"type":  "string"},{"type":  "null"}],
                                                                                                           "title":  "Plan Text",
                                                                                                           "default":  ""
                                                                                                       }
                                                                                     },
                                                                      "type":  "object",
                                                                      "required":  [
-                                                                                      "incident_id",
-                                                                                      "code_diff"
+                                                                                      "message"
                                                                                   ],
                                                                      "title":  "StaticAnalysisRequest"
                                                                  },
                                        "TestRunnerRequest":  {
                                                                  "properties":  {
+                                                                                    "message":  {
+                                                                                                    "type":  "string",
+                                                                                                    "title":  "Message",
+                                                                                                    "description":  "Full natural language context including incident ID, test command, and working directory."
+                                                                                                },
                                                                                     "incident_id":  {
-                                                                                                        "type":  "string",
-                                                                                                        "title":  "Incident Id"
+                                                                                                        "anyOf":  [{"type":  "string"},{"type":  "null"}],
+                                                                                                        "title":  "Incident Id",
+                                                                                                        "default":  null
                                                                                                     },
                                                                                     "test_command":  {
-                                                                                                         "anyOf":  [
-                                                                                                                       {
-                                                                                                                           "type":  "string"
-                                                                                                                       },
-                                                                                                                       {
-                                                                                                                           "type":  "null"
-                                                                                                                       }
-                                                                                                                   ],
+                                                                                                         "anyOf":  [{"type":  "string"},{"type":  "null"}],
                                                                                                          "title":  "Test Command",
                                                                                                          "default":  "npm test"
                                                                                                      },
                                                                                     "working_dir":  {
-                                                                                                        "anyOf":  [
-                                                                                                                      {
-                                                                                                                          "type":  "string"
-                                                                                                                      },
-                                                                                                                      {
-                                                                                                                          "type":  "null"
-                                                                                                                      }
-                                                                                                                  ],
-                                                                                                        "title":  "Working Dir"
+                                                                                                        "anyOf":  [{"type":  "string"},{"type":  "null"}],
+                                                                                                        "title":  "Working Dir",
+                                                                                                        "default":  null
                                                                                                     }
                                                                                 },
                                                                  "type":  "object",
                                                                  "required":  [
-                                                                                  "incident_id"
+                                                                                  "message"
                                                                               ],
                                                                  "title":  "TestRunnerRequest"
                                                              },

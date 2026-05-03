@@ -39,7 +39,7 @@ app = FastAPI(title="OpsBob Backend", version="2.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000", "http://localhost:5173"],
+    allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -71,27 +71,31 @@ class OrchestrateDecision(BaseModel):
     reason: str
 
 class StaticAnalysisRequest(BaseModel):
-    incident_id: str
-    code_diff: str
+    incident_id: Optional[str] = "INC-UNKNOWN"
+    code_diff: Optional[str] = ""
     plan_text: Optional[str] = ""
+    message: Optional[str] = None  # natural-language input from Orchestrate
 
 class TestRunnerRequest(BaseModel):
-    incident_id: str
+    incident_id: Optional[str] = "INC-UNKNOWN"
     test_command: Optional[str] = "npm test"
     working_dir: Optional[str] = None
+    message: Optional[str] = None
 
 class ApprovalRoutingRequest(BaseModel):
-    incident_id: str
+    incident_id: Optional[str] = "INC-UNKNOWN"
     risk_score: Optional[str] = None
     static_verdict: Optional[str] = None
     test_results: Optional[Dict[str, Any]] = None
     risk_assessment: Optional[Dict[str, Any]] = None
     static_result: Optional[Dict[str, Any]] = None
+    message: Optional[str] = None
 
 class PostIncidentRequest(BaseModel):
-    incident_id: str
+    incident_id: Optional[str] = "INC-UNKNOWN"
     timeline: Optional[str] = None
     resolution_data: Optional[Dict[str, Any]] = None
+    message: Optional[str] = None
 
 
 # ── Startup ──────────────────────────────────────────────────────
@@ -438,11 +442,10 @@ async def prepare_orchestrate(incidentId: str):
 @app.post("/orchestrate/static-analysis")
 async def orchestrate_static_analysis(request: StaticAnalysisRequest):
     """Tool endpoint for watsonx Orchestrate StaticAnalysisAgent."""
-    return await run_static_analysis(
-        request.incident_id,
-        request.code_diff,
-        request.plan_text or ""
-    )
+    # Accept natural-language message from Orchestrate as the code diff/context
+    diff = request.code_diff or request.message or request.plan_text or "No diff provided"
+    incident_id = request.incident_id or "INC-UNKNOWN"
+    return await run_static_analysis(incident_id, diff, request.plan_text or "")
 
 
 # ── POST /orchestrate/run-tests ─────────────────────────────────
