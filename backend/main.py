@@ -494,6 +494,108 @@ async def orchestrate_post_incident(request: PostIncidentRequest):
     }
 
 
+# ── GET /orchestrate/stream/{incidentId} ────────────────────────
+@app.get("/orchestrate/stream/{incidentId}")
+async def stream_orchestrate_direct(incidentId: str):
+    """
+    Direct IBM watsonx Orchestrate 4-agent pipeline trigger via SSE.
+    Streams: started → progress (every 3 s) → agent_result (×4) → complete.
+    Works even when Bob analysis has not run yet — builds message from
+    whatever incident data is available in active_incidents.
+    """
+    from orchestrate_client import _invoke_agent, _extract_text, _parse_decision
+
+    incident = active_incidents.get(incidentId, {})
+    service  = incident.get("service") or incident.get("entityName") or "unknown-service"
+    severity = incident.get("severity", "HIGH")
+    inc_type = incident.get("type", "MEMORY_LEAK")
+    title    = incident.get("title", f"Incident {incidentId}")
+    raw_msg  = incident.get("message", "")
+
+    lines = [
+        f"INCIDENT: {incidentId}",
+        f"SERVICE: {service}",
+        f"SEVERITY: {severity}",
+        f"TYPE: {inc_type}",
+        f"DESCRIPTION: {raw_msg or title}",
+    ]
+    code_diff = (incident.get("bob_response") or incident.get("fixed_code") or "")[:1200]
+    plan      = (incident.get("plan_response") or "")[:800]
+    if code_diff:
+        lines += ["", "PROPOSED FIX (code diff):", code_diff]
+    if plan:
+        lines += ["", "ROOT CAUSE ANALYSIS:", plan]
+
+    message = "\n".join(lines)
+
+    _TOOL_AGENT = {
+        "orchestrate_static_analysis": "static_analysis",
+        "orchestrate_run_tests":        "test_runner",
+        "orchestrate_route_approval":   "approval_router",
+        "orchestrate_post_incident":    "post_incident",
+    }
+
+    async def event_generator():
+        def enc(payload: dict) -> str:
+            return f"data: {json.dumps(payload)}\n\n"
+
+        yield enc({"phase": "started", "incident_id": incidentId,
+                   "message": "Invoking IBM watsonx Orchestrate commander…"})
+        try:
+            task    = asyncio.create_task(_invoke_agent(message))
+            elapsed = 0
+            while not task.done():
+                await asyncio.sleep(3)
+                elapsed += 3
+                yield enc({"phase": "progress", "elapsed": elapsed,
+                           "message": f"Commander orchestrating agents… ({elapsed}s)"})
+
+            result = await task
+
+            step_history = (result.get("result", {})
+                                  .get("data", {})
+                                  .get("message", {})
+                                  .get("step_history", []))
+
+            emitted: set = set()
+            for step in step_history:
+                for detail in step.get("step_details", []):
+                    if detail.get("type") == "tool_response":
+                        tool_name = detail.get("name", "")
+                        agent_id  = _TOOL_AGENT.get(tool_name)
+                        if agent_id and agent_id not in emitted:
+                            emitted.add(agent_id)
+                            raw_content = detail.get("content", "{}")
+                            try:
+                                agent_result = json.loads(raw_content)
+                            except Exception:
+                                agent_result = {"raw": raw_content}
+                            yield enc({
+                                "phase":   "agent_result",
+                                "agent":   agent_id,
+                                "result":  agent_result,
+                                "verdict": (agent_result.get("verdict")
+                                            or agent_result.get("recommendation", "unknown")),
+                            })
+
+            commander_text = _extract_text(result)
+            decision       = _parse_decision(commander_text)
+            yield enc({"phase": "complete", "decision": decision,
+                       "commander_text": commander_text,
+                       "incident_id": incidentId, "done": True})
+
+        except Exception as exc:
+            print(f"[ORCHESTRATE STREAM] Error for {incidentId}: {exc}")
+            yield enc({"phase": "error", "message": str(exc), "done": True})
+
+    return StreamingResponse(
+        event_generator(),
+        media_type="text/event-stream",
+        headers={"Cache-Control": "no-cache", "Connection": "keep-alive",
+                 "X-Accel-Buffering": "no"},
+    )
+
+
 # ── GET /deploy-stream/{incidentId} ─────────────────────────────
 @app.get("/deploy-stream/{incidentId}")
 async def stream_deployment(incidentId: str):

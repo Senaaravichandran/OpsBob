@@ -73,6 +73,38 @@
   font-weight: 500;
   flex-shrink: 0;
 }
+
+/* Center panel mode tabs */
+.dashboard__center-tabs {
+  display: flex;
+  gap: 4px;
+  margin-left: auto;
+}
+
+.dashboard__center-tab {
+  font-size: 10px;
+  letter-spacing: 1.5px;
+  font-weight: 600;
+  padding: 3px 10px;
+  border-radius: 3px;
+  border: 1px solid var(--ob-border);
+  background: transparent;
+  color: var(--ob-text-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  font-family: 'IBM Plex Mono', monospace;
+}
+
+.dashboard__center-tab:hover {
+  border-color: var(--ob-accent-blue);
+  color: var(--ob-accent-blue);
+}
+
+.dashboard__center-tab--active {
+  background: var(--ob-accent-blue);
+  border-color: var(--ob-accent-blue);
+  color: #000;
+}
 .dashboard__panel-content {
   flex: 1;
   overflow-y: auto;

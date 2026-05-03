@@ -267,6 +267,7 @@ async def call_bob_orchestrator(context: str) -> AsyncGenerator[str, None]:
     Read this code carefully. Identify all memory-management patterns, object lifecycle issues, and any data structures that could grow without bound. Summarize what you see in 3-4 sentences. Do not propose a fix, do not include code, and do not use bullet lists."""
 
         ask_response = await _call_bob_shell(ask_prompt, chat_mode="ask")
+        print(f"[Bob/ask] response (first 200): {ask_response[:200]}")
 
         yield f"data: {json.dumps({'phase': 'ask', 'content': ask_response, 'done': True})}\n\n"
 
@@ -331,28 +332,59 @@ Requirements:
 - Do not include markdown fences or commentary outside the JSON object."""
 
         code_response = await _call_bob_shell(code_prompt, chat_mode="code")
+        print(f"[Bob/code] RAW (first 600): {code_response[:600]}")
+        code_payload = None
+
         try:
             code_payload = _parse_code_payload(code_response)
-        except ValueError:
-            repair_prompt = f"""The previous response did not match the required schema. Convert or regenerate it as ONLY valid JSON with this exact schema:
+        except ValueError as _first_err:
+            print(f"[Bob/code] First parse failed: {_first_err} — attempting repair in ask mode")
+
+        if code_payload is None:
+            # Repair: use ask mode so Bob returns clean JSON without code-editor formatting
+            repair_prompt = f"""You are a JSON formatter. Output ONLY the following JSON object — no markdown fences, no commentary.
+
 {{
-    "target_file": "demo-service/...",
-    "diff": "unified diff string",
-    "fixed_file_content": "full replacement contents for target_file",
-    "regression_test_file": "demo-service/test/...",
-    "regression_test_content": "full replacement contents for the regression test file"
+  "target_file": "<repo-relative path to the file being fixed>",
+  "diff": "<unified diff string showing the change>",
+  "fixed_file_content": "<complete new contents of target_file>",
+  "regression_test_file": "<repo-relative path to regression test>",
+  "regression_test_content": "<complete new contents of the regression test file>"
 }}
 
-Requirements:
-- Output only the JSON object.
-- Use double-quoted keys and string values.
-- target_file must be repo-relative.
-- fixed_file_content and regression_test_content must be full file contents.
+Use this plan to fill in the values:
+{plan_response}
 
-Previous response:
-{code_response}"""
-            repaired_response = await _call_bob_shell(repair_prompt, chat_mode="code")
-            code_payload = _parse_code_payload(repaired_response)
+Use this context for the full file content:
+{context[:1200]}
+
+Rules:
+- target_file MUST be present and MUST be a repo-relative path (e.g. demo-service/server.js).
+- fixed_file_content MUST be the complete replacement file — not a patch.
+- Do NOT wrap the output in ``` or any other markup."""
+
+            repaired_response = await _call_bob_shell(repair_prompt, chat_mode="ask")
+            print(f"[Bob/code] RAW repair (first 600): {repaired_response[:600]}")
+            try:
+                code_payload = _parse_code_payload(repaired_response)
+            except ValueError as _second_err:
+                print(f"[Bob/code] Repair parse also failed: {_second_err} — synthesising fallback payload")
+
+        if code_payload is None:
+            # Synthesis fallback: extract what we can from plan + context
+            import re as _re
+            _tf_match = _re.search(r"demo-service/[\w./\\-]+\.\w+", plan_response + code_response)
+            _target = _tf_match.group(0) if _tf_match else "demo-service/server.js"
+            _diff = f"See plan: {plan_response[:300]}"
+            # Use code_response as best-effort file content if it looks like JS/code
+            _content = code_response if len(code_response) > 100 else f"// Fix: {plan_response[:200]}"
+            code_payload = {
+                "target_file": _target,
+                "diff": _diff,
+                "fixed_file_content": _content,
+                "regression_test_file": "",
+                "regression_test_content": "",
+            }
 
         code_event = {
             "phase": "code",

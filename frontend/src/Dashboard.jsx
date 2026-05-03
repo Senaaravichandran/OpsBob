@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react'
-import { Tag } from '@carbon/react'
-import { Activity, IbmCloud } from '@carbon/icons-react'
+import { Tag, Button } from '@carbon/react'
+import { Activity, IbmCloud, Bot } from '@carbon/icons-react'
 import Lottie from 'lottie-react'
 import chatbotAnimation from '../public/Chatbot.json'
 
@@ -9,6 +9,7 @@ import DiagnosisCard from './components/DiagnosisCard'
 import RiskAssessmentCard from './components/RiskAssessmentCard'
 import OrchestrationFlowCard from './components/OrchestrationFlowCard'
 import AgentPipelineStatus from './components/AgentPipelineStatus'
+import OrchestratePanel from './components/OrchestratePanel'
 import FixActions from './components/FixActions'
 import AuditTrail from './components/AuditTrail'
 import MemoryTelemetry from './components/MemoryTelemetry'
@@ -47,6 +48,16 @@ function Dashboard() {
   const [analysisError, setAnalysisError] = useState(null)
   const [orchestrateDecision, setOrchestrateDecision] = useState(null)
   const [orchestrateStatus, setOrchestrateStatus] = useState(null)
+
+  // ── IBM watsonx Orchestrate direct pipeline state ──
+  const [centerMode, setCenterMode] = useState('bob')             // 'bob' | 'orchestrate'
+  const [orchState, setOrchState] = useState('idle')              // idle | running | complete | error
+  const [orchAgentResults, setOrchAgentResults] = useState({})
+  const [orchCommanderText, setOrchCommanderText] = useState('')
+  const [orchDecision, setOrchDecision] = useState('')
+  const [orchElapsed, setOrchElapsed] = useState(0)
+  const [orchProgressMsg, setOrchProgressMsg] = useState('')
+  const [orchIncidentId, setOrchIncidentId] = useState(null)
   const [executionFeed, setExecutionFeed] = useState([])
   const [deploying, setDeploying] = useState(false)
   const [resolved, setResolved] = useState(false)
@@ -67,6 +78,40 @@ function Dashboard() {
         ...entry
       }
     ].slice(-18)))
+  }, [])
+
+  // ── IBM watsonx Orchestrate direct pipeline ──────────────────
+  const handleOrchestrateRun = useCallback((incidentId) => {
+    setOrchIncidentId(incidentId)
+    setCenterMode('orchestrate')
+    setOrchState('running')
+    setOrchAgentResults({})
+    setOrchCommanderText('')
+    setOrchDecision('')
+    setOrchElapsed(0)
+    setOrchProgressMsg('')
+
+    const es = new EventSource(`/orchestrate/stream/${incidentId}`)
+    es.onmessage = (event) => {
+      try {
+        const data = JSON.parse(event.data)
+        if (data.phase === 'progress') {
+          setOrchElapsed(data.elapsed)
+          setOrchProgressMsg(data.message)
+        } else if (data.phase === 'agent_result') {
+          setOrchAgentResults(prev => ({ ...prev, [data.agent]: data.result }))
+        } else if (data.phase === 'complete') {
+          setOrchCommanderText(data.commander_text || '')
+          setOrchDecision(data.decision || '')
+          setOrchState('complete')
+          es.close()
+        } else if (data.phase === 'error') {
+          setOrchState('error')
+          es.close()
+        }
+      } catch { /* ignore parse errors */ }
+    }
+    es.onerror = () => { setOrchState('error'); es.close() }
   }, [])
 
   // Poll for incidents
@@ -388,20 +433,43 @@ function Dashboard() {
             incidents={incidents}
             onAnalyze={handleAnalyze}
             analyzingId={activeIncidentId}
+            onOrchestrate={handleOrchestrateRun}
+            orchestratingId={orchState === 'running' ? orchIncidentId : null}
           />
         </section>
 
         {/* Center Panel — Analysis Engine */}
         <section className="dashboard__panel dashboard__panel--center">
           <div className="dashboard__panel-header">
-            <Activity size={16} />
-            <span>BOB ANALYSIS ENGINE</span>
-            {activeIncidentId && (
-              <Tag type="blue" size="sm">{activeIncidentId}</Tag>
+            {centerMode === 'orchestrate' ? <Bot size={16} /> : <Activity size={16} />}
+            <span>{centerMode === 'orchestrate' ? 'ORCHESTRATE PIPELINE' : 'BOB ANALYSIS ENGINE'}</span>
+            {(activeIncidentId || orchIncidentId) && (
+              <Tag type="blue" size="sm">{orchIncidentId || activeIncidentId}</Tag>
             )}
+            <div className="dashboard__center-tabs">
+              <button
+                className={`dashboard__center-tab ${centerMode === 'bob' ? 'dashboard__center-tab--active' : ''}`}
+                onClick={() => setCenterMode('bob')}
+              >BOB</button>
+              <button
+                className={`dashboard__center-tab ${centerMode === 'orchestrate' ? 'dashboard__center-tab--active' : ''}`}
+                onClick={() => setCenterMode('orchestrate')}
+              >ORCHESTRATE</button>
+            </div>
           </div>
           <div className="dashboard__panel-content">
-            {!activeIncidentId ? (
+            {centerMode === 'orchestrate' ? (
+              <OrchestratePanel
+                incidentId={orchIncidentId}
+                onRun={() => orchIncidentId && handleOrchestrateRun(orchIncidentId)}
+                pipelineState={orchState}
+                agentResults={orchAgentResults}
+                commanderText={orchCommanderText}
+                decision={orchDecision}
+                elapsed={orchElapsed}
+                progressMsg={orchProgressMsg}
+              />
+            ) : !activeIncidentId ? (
               <div className="dashboard__empty-state">
                 <div className="dashboard__empty-icon">
                   <Lottie 

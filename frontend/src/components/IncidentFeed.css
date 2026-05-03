@@ -16,4 +16,7 @@
 .incident-card__service { font-size: 14px; font-weight: 500; color: var(--ob-text-primary); margin-bottom: 4px; }
 .incident-card__type { font-size: 11px; color: var(--ob-accent-amber); letter-spacing: 1px; margin-bottom: 8px; }
 .incident-card__meta { display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: var(--ob-text-muted); }
-.incident-card__analyze-btn { margin-top: 10px; width: 100%; font-family: 'IBM Plex Mono', monospace !important; letter-spacing: 1px; font-size: 11px !important; }
+.incident-card__actions { display: flex; flex-direction: column; gap: 6px; margin-top: 10px; }
+.incident-card__analyze-btn { width: 100%; font-family: 'IBM Plex Mono', monospace !important; letter-spacing: 1px; font-size: 11px !important; }
+.incident-card__orchestrate-btn { width: 100%; font-family: 'IBM Plex Mono', monospace !important; letter-spacing: 1px; font-size: 11px !important; border-color: var(--ob-accent-blue) !important; color: var(--ob-accent-blue) !important; }
+.incident-card__orchestrate-btn:hover { background: rgba(68,136,255,0.1) !important; }

@@ -1,0 +1,279 @@
+/* OrchestratePanel — IBM watsonx 4-agent pipeline UI */
+
+.orc-panel {
+  padding: 16px;
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.orc-panel--empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  min-height: 240px;
+  color: var(--ob-text-muted);
+  font-size: 12px;
+  text-align: center;
+  gap: 8px;
+  padding: 24px;
+}
+
+.orc-panel--empty p {
+  max-width: 280px;
+  line-height: 1.6;
+}
+
+/* ── Header ── */
+.orc-panel__header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.orc-panel__title-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+  flex: 1;
+}
+
+.orc-panel__bot-icon {
+  color: var(--ob-accent-blue);
+  flex-shrink: 0;
+}
+
+.orc-panel__title {
+  font-size: 11px;
+  letter-spacing: 3px;
+  font-weight: 600;
+  color: var(--ob-text-secondary);
+  text-transform: uppercase;
+}
+
+/* ── Progress ── */
+.orc-progress {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  padding: 12px;
+  background: var(--ob-surface);
+  border: 1px solid var(--ob-accent-blue);
+  border-radius: 4px;
+}
+
+.orc-progress-bar {
+  height: 2px;
+  background: var(--ob-border);
+  border-radius: 2px;
+  overflow: hidden;
+}
+
+.orc-progress-fill {
+  height: 100%;
+  background: var(--ob-accent-blue);
+  box-shadow: 0 0 8px rgba(68, 136, 255, 0.5);
+  transition: width 0.6s ease;
+}
+
+/* ── Error ── */
+.orc-error {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--ob-accent-red);
+  font-size: 12px;
+  padding: 10px 12px;
+  border: 1px solid rgba(255, 68, 68, 0.4);
+  border-radius: 4px;
+  background: rgba(255, 68, 68, 0.06);
+}
+
+/* ── Agent grid ── */
+.orc-agents {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+}
+
+.orc-card {
+  padding: 12px;
+  border-radius: 4px;
+  border: 1px solid var(--ob-border);
+  background: var(--ob-surface);
+  transition: border-color 0.3s ease;
+}
+
+.orc-card--pending { opacity: 0.35; }
+.orc-card--running { border-color: var(--ob-accent-blue); animation: pulse 1.5s ease-in-out infinite; }
+.orc-card--pass    { border-left: 3px solid var(--ob-accent-green); }
+.orc-card--warn    { border-left: 3px solid var(--ob-accent-amber); }
+.orc-card--fail    { border-left: 3px solid var(--ob-accent-red); }
+.orc-card--done    { border-left: 3px solid var(--ob-accent-cyan); }
+
+.orc-card__header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+  flex-wrap: wrap;
+}
+
+.orc-card__icon { color: var(--ob-accent-blue); flex-shrink: 0; }
+.orc-card__label { font-size: 11px; font-weight: 600; letter-spacing: 1px; flex: 1; }
+.orc-card__ms { font-size: 10px; color: var(--ob-text-muted); margin-left: auto; }
+
+/* ── Result content ── */
+.orc-result { font-size: 11px; color: var(--ob-text-secondary); }
+
+.orc-findings {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  margin: 0;
+  padding: 0;
+}
+
+.orc-findings li {
+  padding-left: 12px;
+  position: relative;
+  line-height: 1.4;
+}
+
+.orc-findings li::before {
+  content: '▸';
+  position: absolute;
+  left: 0;
+  color: var(--ob-accent-amber);
+}
+
+.orc-tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 6px;
+}
+
+/* Test runner */
+.orc-test-stats {
+  display: flex;
+  gap: 10px;
+  margin-bottom: 6px;
+  font-size: 11px;
+  font-weight: 500;
+}
+
+.orc-stat--pass { color: var(--ob-accent-green); }
+.orc-stat--fail { color: var(--ob-accent-red); }
+.orc-stat--skip { color: var(--ob-text-muted); }
+
+.orc-output {
+  font-size: 10px;
+  font-family: 'IBM Plex Mono', monospace;
+  background: rgba(0, 0, 0, 0.35);
+  padding: 6px 8px;
+  border-radius: 3px;
+  white-space: pre-wrap;
+  word-break: break-all;
+  max-height: 64px;
+  overflow-y: auto;
+  margin-top: 6px;
+  color: var(--ob-text-muted);
+}
+
+/* Approval router */
+.orc-signals {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 3px;
+  margin: 6px 0;
+}
+
+.orc-signal {
+  display: flex;
+  justify-content: space-between;
+  padding: 3px 6px;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 3px;
+}
+
+.orc-signal__key {
+  color: var(--ob-text-muted);
+  font-size: 10px;
+  text-transform: uppercase;
+}
+
+.orc-signal__val {
+  color: var(--ob-text-primary);
+  font-size: 10px;
+  font-weight: 600;
+}
+
+.orc-reason { color: var(--ob-accent-amber); margin-bottom: 6px; line-height: 1.4; }
+.orc-route  { margin-top: 6px; color: var(--ob-text-secondary); }
+
+/* Post-incident */
+.orc-report-row {
+  display: flex;
+  gap: 8px;
+  margin-bottom: 5px;
+  line-height: 1.4;
+}
+
+.orc-report-key {
+  color: var(--ob-accent-cyan);
+  font-weight: 600;
+  font-size: 10px;
+  text-transform: uppercase;
+  min-width: 70px;
+  flex-shrink: 0;
+  padding-top: 1px;
+}
+
+.orc-runbook {
+  font-size: 10px;
+  color: var(--ob-text-muted);
+  padding: 6px 8px;
+  background: rgba(0, 0, 0, 0.25);
+  border-radius: 3px;
+  margin-top: 8px;
+  font-family: 'IBM Plex Mono', monospace;
+  white-space: pre-wrap;
+  word-break: break-all;
+}
+
+/* ── Commander summary ── */
+.orc-commander {
+  padding: 12px;
+  background: rgba(68, 136, 255, 0.06);
+  border: 1px solid rgba(68, 136, 255, 0.2);
+  border-radius: 4px;
+}
+
+.orc-commander__header {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin-bottom: 8px;
+  font-size: 10px;
+  letter-spacing: 2px;
+  text-transform: uppercase;
+  color: var(--ob-accent-blue);
+}
+
+.orc-commander__text {
+  font-size: 12px;
+  line-height: 1.65;
+  color: var(--ob-text-secondary);
+  white-space: pre-wrap;
+}
+
+@keyframes pulse {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.6; }
+}

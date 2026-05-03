@@ -1,9 +1,9 @@
 import React from 'react'
 import { Tag, Button } from '@carbon/react'
-import { Warning, Renew } from '@carbon/icons-react'
+import { Warning, Renew, Bot } from '@carbon/icons-react'
 import './IncidentFeed.css'
 
-function IncidentFeed({ incidents, onAnalyze, analyzingId }) {
+function IncidentFeed({ incidents, onAnalyze, analyzingId, onOrchestrate, orchestratingId }) {
   const incidentList = Object.entries(incidents || {}).map(([id, data]) => ({
     id,
     ...data
@@ -52,18 +52,30 @@ function IncidentFeed({ incidents, onAnalyze, analyzingId }) {
                 'warm-gray'
               } size="sm">{(inc.status || 'received').toUpperCase()}</Tag>
             </div>
-            {inc.status === 'received' && (
+            <div className="incident-card__actions">
+              {inc.status === 'received' && (
+                <Button
+                  kind="danger--tertiary"
+                  size="sm"
+                  className="incident-card__analyze-btn"
+                  onClick={() => onAnalyze(inc.id || inc.incident_id)}
+                  disabled={!!analyzingId}
+                  renderIcon={Renew}
+                >
+                  ANALYZE WITH BOB
+                </Button>
+              )}
               <Button
-                kind="danger--tertiary"
+                kind="ghost"
                 size="sm"
-                className="incident-card__analyze-btn"
-                onClick={() => onAnalyze(inc.id || inc.incident_id)}
-                disabled={!!analyzingId}
-                renderIcon={Renew}
+                className="incident-card__orchestrate-btn"
+                onClick={() => onOrchestrate(inc.id || inc.incident_id)}
+                disabled={orchestratingId === (inc.id || inc.incident_id)}
+                renderIcon={Bot}
               >
-                ANALYZE WITH BOB
+                {orchestratingId === (inc.id || inc.incident_id) ? 'RUNNING…' : 'ORCHESTRATE'}
               </Button>
-            )}
+            </div>
           </div>
         ))}
       </div>
